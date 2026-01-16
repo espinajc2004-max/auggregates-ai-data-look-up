@@ -1,0 +1,42 @@
+# Environment — NEVER commit secrets
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+
+# ML model weights (too large for git — loaded from HuggingFace at runtime)
+ml/models/
+ml/cache/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Kiro specs (dev only)
+.kiro/

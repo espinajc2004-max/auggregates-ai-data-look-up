@@ -1,0 +1,515 @@
+"""
+Query Engine
+============
+Rule-based query executor for AU-Ggregates AI.
+Queries ai_documents table directly — no ML model needed.
+Handles all 6 bug categories from production testing.
+"""
+
+import re
+import time
+from typing import Dict, Any, List, Optional
+from app.services.supabase_client import get_supabase_client
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+BASE_URL_SUFFIX = "ai_documents"
+
+
+class QueryEngine:
+    """
+    Executes structured intents against ai_documents table.
+    Uses Supabase REST API directly — no SQL generation needed.
+    """
+
+    def __init__(self):
+        self.supabase = get_supabase_client()
+
+    def execute(self, intent: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute intent and return results.
+
+        Args:
+            intent: Parsed intent from IntentParser
+
+        Returns:
+            Dict with data, message, row_count
+        """
+        start = time.time()
+        intent_type = intent.get("intent", "general_search")
+        slots = intent.get("slots", {})
+
+        try:
+            if intent_type == "file_summary":
+                result = self._file_summary(slots)
+            elif intent_type == "find_in_file":
+                result = self._find_in_file(slots)
+            elif intent_type == "list_categories":
+                result = self._list_categories(slots)
+            elif intent_type == "compare":
+                result = self._compare(slots)
+            elif intent_type == "count":
+                result = self._count(slots)
+            elif intent_type == "sum":
+                result = self._sum(slots)
+            elif intent_type == "date_filter":
+                result = self._date_filter(slots)
+            elif intent_type == "ambiguous":
+                result = self._handle_ambiguous(slots)
+            else:
+                result = self._general_search(slots)
+
+            elapsed = (time.time() - start) * 1000
+            result["elapsed_ms"] = round(elapsed, 2)
+            result["intent"] = intent_type
+            return result
+
+        except Exception as e:
+            logger.error(f"[QueryEngine] Error executing {intent_type}: {e}", exc_info=True)
+            return {
+                "data": [],
+                "message": f"May error sa paghahanap: {str(e)}",
+                "row_count": 0,
+                "intent": intent_type,
+                "error": str(e)
+            }
+
+    # -------------------------------------------------------------------------
+    # INTENT HANDLERS
+    # -------------------------------------------------------------------------
+
+    def _file_summary(self, slots: Dict) -> Dict:
+        """Get summary/overview of a specific file."""
+        file_name = slots.get("file_name", "")
+        params = {
+            "document_type": "eq.file",
+            "select": "id,file_name,project_name,source_table,searchable_text,metadata",
+            "limit": "10"
+        }
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+
+        rows = self._fetch(params)
+
+        if not rows:
+            # Try broader search — maybe it's a project name
+            params2 = {
+                "document_type": "eq.file",
+                "select": "id,file_name,project_name,source_table,searchable_text,metadata",
+                "limit": "10"
+            }
+            if file_name:
+                params2["project_name"] = f"ilike.*{file_name}*"
+            rows = self._fetch(params2)
+
+        if not rows:
+            return {
+                "data": [],
+                "message": f"Walang nakitang file na '{file_name}'. Siguro mali ang spelling?",
+                "row_count": 0
+            }
+
+        return {
+            "data": rows,
+            "message": f"Nahanap ko ang {len(rows)} file(s) para sa '{file_name}'.",
+            "row_count": len(rows)
+        }
+
+    def _find_in_file(self, slots: Dict) -> Dict:
+        """Find rows matching a category inside a specific file."""
+        file_name = slots.get("file_name", "")
+        category = slots.get("category", "")
+        method = slots.get("method", "")
+
+        params = {
+            "document_type": "eq.row",
+            "select": "id,file_name,project_name,searchable_text,metadata",
+            "limit": "50"
+        }
+
+        # Build search text combining category + method
+        search_parts = [p for p in [category, method] if p]
+        search_text = " ".join(search_parts)
+
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+        if search_text:
+            params["searchable_text"] = f"ilike.*{search_text}*"
+
+        rows = self._fetch(params)
+
+        if not rows:
+            return {
+                "data": [],
+                "message": f"Walang '{search_text}' sa file na '{file_name}'.",
+                "row_count": 0
+            }
+
+        return {
+            "data": rows,
+            "message": f"Nahanap ko ang {len(rows)} row(s) na may '{search_text}' sa '{file_name}'.",
+            "row_count": len(rows)
+        }
+
+    def _list_categories(self, slots: Dict) -> Dict:
+        """List distinct categories from metadata."""
+        file_name = slots.get("file_name", "")
+
+        params = {
+            "document_type": "eq.row",
+            "select": "metadata",
+            "limit": "500"
+        }
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+
+        rows = self._fetch(params)
+
+        # Extract unique categories from metadata
+        categories = set()
+        for row in rows:
+            meta = row.get("metadata") or {}
+            # Real schema uses "Category" key
+            cat = meta.get("Category") or meta.get("category") or meta.get("type")
+            if cat:
+                categories.add(str(cat).strip())
+
+        if not categories:
+            # Fallback: extract from searchable_text
+            params2 = dict(params)
+            params2["select"] = "searchable_text"
+            rows2 = self._fetch(params2)
+            for row in rows2:
+                text = row.get("searchable_text", "")
+                # Try to extract category-like tokens
+                for token in text.split():
+                    if len(token) > 3 and token.isalpha():
+                        categories.add(token.lower())
+
+        cat_list = sorted(categories)
+        scope = f" sa '{file_name}'" if file_name else ""
+
+        return {
+            "data": [{"category": c} for c in cat_list],
+            "message": f"Nahanap ko ang {len(cat_list)} kategorya{scope}.",
+            "row_count": len(cat_list)
+        }
+
+    def _compare(self, slots: Dict) -> Dict:
+        """Compare two files by count and total amount."""
+        files = slots.get("files", [])
+        category = slots.get("category", "")
+
+        if len(files) < 2:
+            return {
+                "data": [],
+                "message": "Kailangan ng dalawang file para mag-compare. Anong dalawang file?",
+                "row_count": 0,
+                "needs_clarification": True
+            }
+
+        results = []
+        for fname in files:
+            params = {
+                "document_type": "eq.row",
+                "select": "file_name,metadata",
+                "file_name": f"ilike.*{fname}*",
+                "limit": "500"
+            }
+            if category:
+                params["searchable_text"] = f"ilike.*{category}*"
+
+            rows = self._fetch(params)
+            total = 0.0
+            for row in rows:
+                meta = row.get("metadata") or {}
+                for key in ["amount", "Amount", "total", "Total", "value", "Value"]:
+                    val = meta.get(key)
+                    if val is not None:
+                        try:
+                            total += float(str(val).replace(",", ""))
+                        except (ValueError, TypeError):
+                            pass
+                        break
+
+            results.append({
+                "file": fname,
+                "count": len(rows),
+                "total_amount": round(total, 2)
+            })
+
+        msg_parts = [f"'{r['file']}': {r['count']} rows, ₱{r['total_amount']:,.2f}" for r in results]
+        return {
+            "data": results,
+            "message": "Comparison result:\n" + "\n".join(msg_parts),
+            "row_count": len(results)
+        }
+
+    def _count(self, slots: Dict) -> Dict:
+        """Count rows with optional filters."""
+        file_name = slots.get("file_name", "")
+        category = slots.get("category", "")
+        date_slot = slots.get("date")
+
+        params = {
+            "document_type": "eq.row",
+            "select": "id",
+            "limit": "1000"
+        }
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+        if category:
+            params["searchable_text"] = f"ilike.*{category}*"
+
+        rows = self._fetch(params)
+
+        # Apply date filter in-memory if needed
+        if date_slot:
+            rows = self._apply_date_filter(rows, date_slot)
+
+        scope_parts = []
+        if file_name:
+            scope_parts.append(f"sa '{file_name}'")
+        if category:
+            scope_parts.append(f"na '{category}'")
+        if date_slot:
+            scope_parts.append(self._date_label(date_slot))
+
+        scope = " ".join(scope_parts) or "lahat"
+
+        return {
+            "data": [{"count": len(rows)}],
+            "message": f"May {len(rows)} rows {scope}.",
+            "row_count": len(rows)
+        }
+
+    def _sum(self, slots: Dict) -> Dict:
+        """Sum amounts with optional filters."""
+        file_name = slots.get("file_name", "")
+        category = slots.get("category", "")
+        date_slot = slots.get("date")
+
+        params = {
+            "document_type": "eq.row",
+            "select": "metadata,file_name",
+            "limit": "1000"
+        }
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+        if category:
+            params["searchable_text"] = f"ilike.*{category}*"
+
+        rows = self._fetch(params)
+
+        if date_slot:
+            rows = self._apply_date_filter(rows, date_slot)
+
+        total = 0.0
+        for row in rows:
+            meta = row.get("metadata") or {}
+            # Real schema uses "Expenses" key
+            for key in ["Expenses", "expenses", "Amount", "amount", "Total", "total"]:
+                val = meta.get(key)
+                if val is not None:
+                    try:
+                        total += float(str(val).replace(",", "").replace("₱", ""))
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+        scope_parts = []
+        if file_name:
+            scope_parts.append(f"sa '{file_name}'")
+        if category:
+            scope_parts.append(f"na '{category}'")
+        if date_slot:
+            scope_parts.append(self._date_label(date_slot))
+
+        scope = " ".join(scope_parts) or "lahat"
+
+        return {
+            "data": [{"total": round(total, 2), "count": len(rows)}],
+            "message": f"Kabuuang halaga {scope}: ₱{total:,.2f} ({len(rows)} rows)",
+            "row_count": len(rows)
+        }
+
+    def _date_filter(self, slots: Dict) -> Dict:
+        """Filter rows by date."""
+        date_slot = slots.get("date")
+        file_name = slots.get("file_name", "")
+        category = slots.get("category", "")
+        method = slots.get("method", "")
+
+        params = {
+            "document_type": "eq.row",
+            "select": "id,file_name,searchable_text,metadata",
+            "limit": "200"
+        }
+        if file_name:
+            params["file_name"] = f"ilike.*{file_name}*"
+
+        search_parts = [p for p in [category, method] if p]
+        if search_parts:
+            params["searchable_text"] = f"ilike.*{' '.join(search_parts)}*"
+
+        rows = self._fetch(params)
+
+        if date_slot:
+            rows = self._apply_date_filter(rows, date_slot)
+
+        label = self._date_label(date_slot) if date_slot else ""
+        scope = f" {label}" if label else ""
+
+        return {
+            "data": rows,
+            "message": f"Nahanap ko ang {len(rows)} rows{scope}.",
+            "row_count": len(rows)
+        }
+
+    def _handle_ambiguous(self, slots: Dict) -> Dict:
+        """
+        Ambiguous query — check how many files contain the term.
+        If only 1 file, return results. If multiple, ask for clarification.
+        """
+        category = slots.get("category", "")
+        method = slots.get("method", "")
+        search_term = category or method
+
+        if not search_term:
+            return {
+                "data": [],
+                "message": "Hindi ko maintindihan ang query mo. Pwede mo bang i-rephrase?",
+                "row_count": 0,
+                "needs_clarification": True
+            }
+
+        # Find which files contain this term
+        params = {
+            "document_type": "eq.row",
+            "select": "file_name",
+            "searchable_text": f"ilike.*{search_term}*",
+            "limit": "500"
+        }
+        rows = self._fetch(params)
+
+        # Get unique file names
+        file_names = list({r.get("file_name", "") for r in rows if r.get("file_name")})
+
+        if len(file_names) == 0:
+            return {
+                "data": [],
+                "message": f"Walang nakitang '{search_term}' sa kahit anong file.",
+                "row_count": 0
+            }
+        elif len(file_names) == 1:
+            # Only one file — just return results
+            slots["file_name"] = file_names[0]
+            return self._find_in_file(slots)
+        else:
+            # Multiple files — ask for clarification
+            file_list = ", ".join(f"'{f}'" for f in file_names[:5])
+            return {
+                "data": [{"file_name": f} for f in file_names],
+                "message": (
+                    f"Nahanap ko ang '{search_term}' sa {len(file_names)} files: {file_list}. "
+                    f"Sa alin gusto mo? Specify the file name."
+                ),
+                "row_count": len(file_names),
+                "needs_clarification": True,
+                "clarification_options": file_names
+            }
+
+    def _general_search(self, slots: Dict) -> Dict:
+        """Full-text search fallback."""
+        search_term = slots.get("search_term", "")
+
+        if not search_term:
+            return {
+                "data": [],
+                "message": "Walang search term. Ano ang hinahanap mo?",
+                "row_count": 0
+            }
+
+        params = {
+            "select": "id,file_name,project_name,document_type,searchable_text",
+            "searchable_text": f"ilike.*{search_term}*",
+            "limit": "20"
+        }
+        rows = self._fetch(params)
+
+        if not rows:
+            return {
+                "data": [],
+                "message": f"Walang nakita para sa '{search_term}'.",
+                "row_count": 0
+            }
+
+        return {
+            "data": rows,
+            "message": f"Nahanap ko ang {len(rows)} results para sa '{search_term}'.",
+            "row_count": len(rows)
+        }
+
+    # -------------------------------------------------------------------------
+    # HELPERS
+    # -------------------------------------------------------------------------
+
+    def _fetch(self, params: Dict) -> List[Dict]:
+        """Fetch rows from ai_documents with given params."""
+        try:
+            result = self.supabase.get(BASE_URL_SUFFIX, params=params)
+            if isinstance(result, list):
+                return result
+            return []
+        except Exception as e:
+            logger.error(f"[QueryEngine] Fetch error: {e}")
+            return []
+
+    def _apply_date_filter(self, rows: List[Dict], date_slot: Dict) -> List[Dict]:
+        """Filter rows by date using metadata fields."""
+        if not date_slot:
+            return rows
+
+        date_type = date_slot.get("type")
+        filtered = []
+
+        for row in rows:
+            meta = row.get("metadata") or {}
+            row_date_str = (
+                meta.get("Date") or meta.get("date") or
+                meta.get("user_date") or meta.get("created_at") or
+                row.get("created_at", "")
+            )
+            if not row_date_str:
+                continue
+
+            # Normalize date string
+            row_date_str = str(row_date_str)[:10]  # YYYY-MM-DD
+
+            try:
+                if date_type == "exact":
+                    if row_date_str == date_slot["value"]:
+                        filtered.append(row)
+                elif date_type == "month_range":
+                    start = date_slot["start"]
+                    end = date_slot["end"]
+                    if start <= row_date_str <= end:
+                        filtered.append(row)
+            except Exception:
+                continue
+
+        return filtered
+
+    def _date_label(self, date_slot: Optional[Dict]) -> str:
+        """Human-readable date label."""
+        if not date_slot:
+            return ""
+        if date_slot.get("type") == "exact":
+            return f"noong {date_slot['value']}"
+        elif date_slot.get("type") == "month_range":
+            from app.services.intent_parser import MONTH_MAP
+            month_num = date_slot.get("month", 0)
+            month_name = next((k for k, v in MONTH_MAP.items() if v == month_num and len(k) > 3), str(month_num))
+            return f"sa buwan ng {month_name.capitalize()}"
+        return ""
