@@ -333,8 +333,8 @@ class MistralService:
 
         # Mistral-7B-Instruct uses [INST]...[/INST] format
         system_msg = (
-            "You are an AI assistant for a Filipino construction company expense management system. "
-            "Extract structured intent from user queries (Filipino/English/Taglish). "
+            "You are an AI assistant for a construction company expense management system. "
+            "Extract structured intent from user queries. "
             "Return ONLY a valid JSON object, no explanation.\n\n"
             f"DATABASE SCHEMA:\n{SCHEMA_CONTEXT}\n\n"
             f"{SAFETY_RULES}"
@@ -491,7 +491,7 @@ class MistralService:
         user_msg = (
             f"User asked: \"{query}\"\n"
             f"Database returned: {data_summary}\n\n"
-            "Write a short, helpful response in Taglish that directly answers the question. "
+            "Write a short, helpful response in English that directly answers the question. "
             "If there are amounts, format them with ₱ sign. Keep it under 3 sentences."
         )
 
@@ -525,8 +525,8 @@ class MistralService:
 
         # Fallback: template response
         if not data:
-            return "Walang nakitang results para sa query mo."
+            return "No results found for your query."
         total_key = next((k for k in ["total", "Expenses", "Amount"] if data[0].get(k)), None)
         if total_key and len(data) == 1:
-            return f"Nahanap ko: {data[0].get(total_key)} ({len(data)} result)."
-        return f"Nahanap ko ang {len(data)} results para sa iyong query."
+            return f"Found: {data[0].get(total_key)} ({len(data)} result)."
+        return f"Found {len(data)} results for your query."
