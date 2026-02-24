@@ -23,7 +23,8 @@ router = APIRouter()
 _query_engine: Optional[QueryEngine] = None
 _mistral_service = None
 _mistral_loading = False
-_mistral_load_error: Optional[str] = None
+_mistral_load_attempts = 0
+_MAX_LOAD_ATTEMPTS = 3
 
 
 def get_query_engine() -> QueryEngine:
@@ -34,20 +35,22 @@ def get_query_engine() -> QueryEngine:
 
 
 def get_mistral_service():
-    """Get or initialize MistralService. Returns None if not available."""
-    global _mistral_service, _mistral_loading, _mistral_load_error
+    """Get or initialize MistralService. Retries up to 3 times if loading fails."""
+    global _mistral_service, _mistral_loading, _mistral_load_attempts
 
     if _mistral_service is not None:
         return _mistral_service
 
-    if _mistral_load_error:
-        return None  # Already failed, don't retry on every request
+    if _mistral_load_attempts >= _MAX_LOAD_ATTEMPTS:
+        return None  # Exhausted retries
 
     if _mistral_loading:
         return None  # Still loading
 
     try:
         _mistral_loading = True
+        _mistral_load_attempts += 1
+        logger.info(f"[HYBRID] Loading Mistral+T5 (attempt {_mistral_load_attempts}/{_MAX_LOAD_ATTEMPTS})")
         from app.services.mistral_service import MistralService
         svc = MistralService()
         svc._load_model()  # Pre-load both Mistral + T5
@@ -55,8 +58,7 @@ def get_mistral_service():
         logger.info("[HYBRID] Mistral+T5 pipeline loaded successfully")
         return _mistral_service
     except Exception as e:
-        _mistral_load_error = str(e)
-        logger.error(f"[HYBRID] Failed to load Mistral+T5: {e}")
+        logger.error(f"[HYBRID] Failed to load Mistral+T5 (attempt {_mistral_load_attempts}): {e}")
         return None
     finally:
         _mistral_loading = False
