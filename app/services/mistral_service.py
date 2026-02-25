@@ -795,9 +795,13 @@ class MistralService:
         user_msg = (
             f"User asked: \"{query}\"\n"
             f"Database returned: {data_summary}\n\n"
-            f"Write a short, helpful response in English that directly answers the question. "
-            f"IMPORTANT: The database returned EXACTLY {len(data)} row(s). State this exact count. "
-            f"If there are amounts, format them with ₱ sign. Keep it under 3 sentences."
+            f"Write a short, helpful response in ENGLISH ONLY that directly answers the question. "
+            f"IMPORTANT RULES:\n"
+            f"- The database returned EXACTLY {len(data)} row(s). State this exact count.\n"
+            f"- If there are amounts, format them with ₱ sign (e.g., ₱12,500.00).\n"
+            f"- Do NOT use Tagalog or Taglish. English only.\n"
+            f"- Keep it under 3 sentences.\n"
+            f"- Do NOT expose SQL or technical details to the user."
         )
 
         prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"

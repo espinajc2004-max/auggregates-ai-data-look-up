@@ -330,7 +330,18 @@ def _extract_category(text: str) -> Optional[str]:
     text_lower = text.lower()
 
     # Exact substring match first (fast)
+    # Skip very short matches and common stop words
+    _cat_stop = {
+        "show", "the", "file", "files", "list", "all", "flow", "cash",
+        "display", "get", "find", "search", "what", "how", "many",
+        "total", "from", "this", "that", "with", "for", "and",
+        "expenses", "expense", "cashflow", "inflow", "outflow",
+    }
     for cat in known_categories:
+        if len(cat) < 3:
+            continue
+        if cat.lower() in _cat_stop:
+            continue
         if cat.lower() in text_lower:
             return cat
 
@@ -345,6 +356,7 @@ def _extract_category(text: str) -> Optional[str]:
             "display", "get", "find", "search", "what", "how", "many",
             "total", "from", "this", "that", "with", "for", "and",
             "expenses", "expense", "cashflow", "inflow", "outflow",
+            "f", "a", "an", "is", "it", "in", "of", "to", "do",
         }
         for cat in known_categories:
             # Check each word in the query against the category
@@ -445,7 +457,8 @@ def _detect_source_table(text: str) -> Optional[str]:
     Returns None if ambiguous (return all).
     """
     text_lower = text.lower()
-    cashflow_words = ["cashflow", "cash flow", "cash-flow", "inflow", "outflow", "balance"]
+    # Match "cash flow", "cashflow", "cash-flow" as a phrase first
+    cashflow_words = ["cashflow", "cash flow", "cash-flow", "inflow", "outflow"]
     expense_words = ["expense", "expenses", "gastos", "cost", "costs", "spending"]
 
     has_cashflow = any(w in text_lower for w in cashflow_words)
@@ -563,13 +576,12 @@ def parse_intent(query: str) -> Dict[str, Any]:
     q_lower = q.lower()
     slots = {}
 
-    # Pre-check: if query mentions "file(s)" + a source table keyword,
+    # Pre-check: if query mentions "file(s)" + a list/show word,
     # route directly to list_files (avoids false positives from fuzzy matching)
     if re.search(r'\bfiles?\b', q_lower):
-        source_table = _detect_source_table(q_lower)
-        # Check if this is a "show me X files" type query (no specific file name or category intent)
-        file_list_words = ["list", "show", "display", "get", "all", "what", "enumerate"]
+        file_list_words = ["list", "show", "display", "get", "all", "what", "enumerate", "the"]
         if any(w in q_lower for w in file_list_words):
+            source_table = _detect_source_table(q_lower)
             if source_table:
                 slots["source_table"] = source_table
             return {"intent": "list_files", "needs_clarification": False, "slots": slots}

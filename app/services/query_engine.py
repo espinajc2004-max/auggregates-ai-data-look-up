@@ -146,17 +146,20 @@ class QueryEngine:
         rows = self._fetch(params)
 
         if not rows:
-            label = f"{source_table.lower()} " if source_table else ""
+            label = f"{source_table} " if source_table else ""
             return {
                 "data": [],
                 "message": f"No {label}files found in the system.",
                 "row_count": 0
             }
 
-        label = f"{source_table.lower()} " if source_table else ""
+        label = f"{source_table} " if source_table else ""
+        names = [r.get("file_name", "") for r in rows if r.get("file_name")]
+        name_list = ", ".join(f"'{n}'" for n in names[:10])
+        suffix = f" and {len(names) - 10} more" if len(names) > 10 else ""
         return {
             "data": rows,
-            "message": f"Found {len(rows)} {label}file(s) in the system.",
+            "message": f"Found {len(rows)} {label}file(s): {name_list}{suffix}.",
             "row_count": len(rows)
         }
 
