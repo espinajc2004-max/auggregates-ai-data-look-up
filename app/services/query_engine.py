@@ -80,10 +80,10 @@ class QueryEngine:
     # -------------------------------------------------------------------------
 
     def _file_summary(self, slots: Dict) -> Dict:
-        """Get summary/overview of a specific file."""
+        """Get summary/overview of a specific file (parent record only)."""
         file_name = slots.get("file_name", "")
-        
-        # Try 1: document_type = 'file'
+
+        # Try 1: document_type = 'file' (correct way)
         params = {
             "document_type": "eq.file",
             "select": "id,file_name,project_name,source_table,searchable_text,metadata",
@@ -105,11 +105,12 @@ class QueryEngine:
                 params2["project_name"] = f"ilike.*{file_name}*"
             rows = self._fetch(params2)
 
-        # Try 3: no document_type filter — some files only have 'row' entries
+        # Try 3: fallback — filter by metadata type='file' in case document_type wasn't set
         if not rows:
             params3 = {
                 "select": "id,file_name,project_name,source_table,searchable_text,metadata",
-                "limit": "20"
+                "metadata->>type": "eq.file",
+                "limit": "10"
             }
             if file_name:
                 params3["file_name"] = f"ilike.*{file_name}*"
@@ -124,9 +125,10 @@ class QueryEngine:
 
         return {
             "data": rows,
-            "message": f"Found {len(rows)} file(s) for '{file_name}'.",
+            "message": f"Found {len(rows)} expense file(s) matching '{file_name}'.",
             "row_count": len(rows)
         }
+
 
     def _find_in_file(self, slots: Dict) -> Dict:
         """Find rows matching a category inside a specific file."""

@@ -517,6 +517,19 @@ class MistralService:
         if date_val:
             where_parts.append(f"metadata->>'Date' ILIKE '%{date_val}%'")
         
+        # Determine if this is a "file lookup" vs "data query"
+        # File lookup: user wants the parent file record (e.g., "show me francis gays file")
+        # Data query: user wants rows inside a file (e.g., "show fuel expenses in francis gays")
+        has_row_filter = any(filters.get(k) for k in ["category", "metadata_value", "supplier", "date"])
+        is_file_lookup = file_name and not has_row_filter and intent_type == "query_data"
+        
+        if is_file_lookup:
+            # Only return the parent file record, not individual rows
+            where_parts.append("document_type = 'file'")
+        elif has_row_filter:
+            # Only return row-level data, not the file record
+            where_parts.append("document_type = 'row'")
+        
         # If no specific filters but we have entities, use searchable_text
         has_specific_filter = any(filters.get(k) for k in ["file_name", "project_name", "category", "metadata_value", "supplier", "date"])
         if not has_specific_filter and entities:
@@ -758,17 +771,18 @@ class MistralService:
         # Summarize data for prompt (avoid huge context)
         if not data:
             data_summary = "No results found."
-        elif len(data) <= 3:
-            data_summary = f"{len(data)} results: {json.dumps(data, default=str)}"
+        elif len(data) <= 10:
+            data_summary = f"EXACTLY {len(data)} rows returned:\n{json.dumps(data, default=str)}"
         else:
-            data_summary = f"{len(data)} results. First 3: {json.dumps(data[:3], default=str)}"
+            data_summary = f"EXACTLY {len(data)} rows returned. Showing first 5:\n{json.dumps(data[:5], default=str)}"
 
         system_msg = SYSTEM_IDENTITY.strip()
         user_msg = (
             f"User asked: \"{query}\"\n"
             f"Database returned: {data_summary}\n\n"
-            "Write a short, helpful response in English that directly answers the question. "
-            "If there are amounts, format them with ₱ sign. Keep it under 3 sentences."
+            f"Write a short, helpful response in English that directly answers the question. "
+            f"IMPORTANT: The database returned EXACTLY {len(data)} row(s). State this exact count. "
+            f"If there are amounts, format them with ₱ sign. Keep it under 3 sentences."
         )
 
         prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
