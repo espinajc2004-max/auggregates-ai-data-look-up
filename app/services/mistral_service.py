@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from app.config.mistral_config import MistralConfig, ModelLoadConfig
-from app.config.prompt_templates import build_system_prompt, SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES
+from app.config.prompt_templates import build_system_prompt, SYSTEM_IDENTITY, SCHEMA_CONTEXT, EXAMPLE_QUERIES, SAFETY_RULES
 from app.services.mistral_context_manager import MistralContextManager
 from app.services.sql_validator import SQLValidator
 from app.services.supabase_client import get_supabase_client
@@ -226,22 +226,25 @@ class MistralService:
                     "timestamp": datetime.utcnow().isoformat()
                 }
 
-            # STAGE 2: T5 generates SQL → validate → execute
-            logger.info("Stage 2: Generating SQL with T5")
+            # STAGE 2: Generate SQL → validate → execute
+            # Chain: T5 (fast) → Mistral SQL (smart) → rule-based (last resort)
+            logger.info("Stage 2: Generating SQL")
             stage2_start = time.time()
             data = []
             sql = ""
             execution_time = 0.0
+            sql_source = "none"
 
             try:
-                sql = await self._generate_sql_with_t5(intent)
-                stage2_time = (time.time() - stage2_start) * 1000
-                logger.info(f"Stage 2 done in {stage2_time:.0f}ms | SQL: {sql}")
-
-                # Validate SQL
+                # Try T5 first (fast, ~60ms on CPU)
+                logger.info("Stage 2a: Trying T5 SQL generation")
+                sql = await self._generate_sql_with_t5(query, intent)
+                sql_source = "t5"
+                
+                # Validate T5 SQL
                 validation_result = self.sql_validator.validate(sql, role="user")
                 if not validation_result.is_valid:
-                    raise ValidationError(", ".join(validation_result.errors or ["Invalid SQL"]))
+                    raise ValidationError(f"T5 SQL invalid: {', '.join(validation_result.errors or ['Invalid SQL'])}")
 
                 # Execute via Supabase RPC
                 supabase = get_supabase_client()
@@ -249,20 +252,45 @@ class MistralService:
                 result = supabase.rpc("execute_sql", {"query": sql})
                 execution_time = (time.time() - exec_start) * 1000
                 data = result if isinstance(result, list) else []
-                logger.info(f"SQL executed in {execution_time:.0f}ms | rows: {len(data)}")
+                logger.info(f"T5 SQL executed in {execution_time:.0f}ms | rows: {len(data)}")
 
-            except (ValidationError, GenerationError, Exception) as sql_err:
-                # T5 SQL failed — fall back to rule-based query_engine
-                logger.warning(f"Stage 2 SQL failed ({sql_err}), falling back to query_engine")
-                stage2_time = (time.time() - stage2_start) * 1000
+            except (ValidationError, GenerationError, Exception) as t5_err:
+                logger.warning(f"Stage 2a T5 failed ({t5_err}), trying Mistral SQL")
+                
+                try:
+                    # Try Mistral SQL (slower but understands JSONB)
+                    logger.info("Stage 2b: Trying Mistral SQL generation")
+                    sql = await self._generate_sql_with_mistral(query, intent)
+                    sql_source = "mistral"
+                    
+                    # Validate Mistral SQL
+                    validation_result = self.sql_validator.validate(sql, role="user")
+                    if not validation_result.is_valid:
+                        raise ValidationError(f"Mistral SQL invalid: {', '.join(validation_result.errors or ['Invalid SQL'])}")
 
-                from app.services.intent_parser import parse_intent
-                from app.services.query_engine import QueryEngine
-                rule_intent = parse_intent(query)
-                engine = QueryEngine()
-                rule_result = engine.execute(rule_intent)
-                data = rule_result.get("data", [])
-                sql = f"-- rule-based fallback: {rule_intent.get('intent')}"
+                    # Execute via Supabase RPC
+                    supabase = get_supabase_client()
+                    exec_start = time.time()
+                    result = supabase.rpc("execute_sql", {"query": sql})
+                    execution_time = (time.time() - exec_start) * 1000
+                    data = result if isinstance(result, list) else []
+                    logger.info(f"Mistral SQL executed in {execution_time:.0f}ms | rows: {len(data)}")
+
+                except (ValidationError, GenerationError, Exception) as mistral_err:
+                    # Both AI models failed — fall back to rule-based
+                    logger.warning(f"Stage 2b Mistral SQL also failed ({mistral_err}), falling back to rule-based")
+
+                    from app.services.intent_parser import parse_intent
+                    from app.services.query_engine import QueryEngine
+                    rule_intent = parse_intent(query)
+                    engine = QueryEngine()
+                    rule_result = engine.execute(rule_intent)
+                    data = rule_result.get("data", [])
+                    sql = f"-- rule-based fallback: {rule_intent.get('intent')}"
+                    sql_source = "rule-based"
+
+            stage2_time = (time.time() - stage2_start) * 1000
+            logger.info(f"Stage 2 done in {stage2_time:.0f}ms | source: {sql_source} | rows: {len(data)}")
 
             # STAGE 3: Mistral formats natural language response
             logger.info("Stage 3: Formatting response with Mistral")
@@ -287,6 +315,7 @@ class MistralService:
                 "query": query,
                 "intent": intent,
                 "sql": sql,
+                "sql_source": sql_source,
                 "sql_valid": True,
                 "data": data,
                 "row_count": len(data),
@@ -407,22 +436,28 @@ class MistralService:
             "clarification_question": rule.get("clarification_question", "")
         }
     
-    async def _generate_sql_with_t5(self, intent: Dict[str, Any]) -> str:
+    async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> str:
         """
-        STAGE 2: Use T5 to generate SQL from structured intent.
+        STAGE 2: Use T5 to generate SQL from natural language query.
         
         Args:
-            intent: Structured intent from Stage 1
+            query: Original natural language query from user
+            intent: Structured intent from Stage 1 (used for context)
             
         Returns:
-            Generated SQL query
+            Generated SQL query (post-processed for JSONB compatibility)
         """
-        # Format intent as T5 input — include schema so T5 knows the correct table/columns
-        intent_text = json.dumps(intent)
+        source_table = intent.get("source_table", "Expenses")
+        category = intent.get("filters", {}).get("metadata_value", "")
+        file_name = intent.get("filters", {}).get("file_name", "")
+        project_name = intent.get("filters", {}).get("project_name", "")
+        
+        # Build natural language input for T5 (not JSON!)
+        # Include column hints so T5 generates better SQL
         t5_input = (
             f"tables: ai_documents (source_table, source_id, file_id, file_name, "
             f"project_id, project_name, searchable_text, metadata) | "
-            f"query: {intent_text}"
+            f"query: {query}"
         )
         
         logger.info(f"T5 input: {t5_input}")
@@ -448,7 +483,6 @@ class MistralService:
                 )
             
             sql = self.t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
             logger.info(f"T5 raw output: {sql}")
             
             # Clean up SQL
@@ -457,13 +491,173 @@ class MistralService:
             if not sql.strip().endswith(";"):
                 sql = sql.strip() + ";"
             
-            logger.info(f"T5 cleaned SQL: {sql}")
+            # Post-process: convert standard column refs to JSONB patterns
+            # T5 generates things like WHERE category = 'fuel' but we need metadata->>'Category'
+            sql = self._convert_to_jsonb_sql(sql, intent)
             
+            logger.info(f"T5 post-processed SQL: {sql}")
             return sql
         
         except Exception as e:
             logger.error(f"T5 SQL generation error: {str(e)}")
             raise GenerationError(f"Failed to generate SQL: {str(e)}")
+    
+    def _convert_to_jsonb_sql(self, sql: str, intent: Dict[str, Any]) -> str:
+        """
+        Post-process T5 SQL to convert standard column references to JSONB patterns.
+        T5 generates: WHERE category = 'fuel'
+        We need:      WHERE metadata->>'Category' ILIKE '%fuel%'
+        """
+        # Known metadata keys that T5 might reference as columns
+        metadata_columns = {
+            "category": "Category",
+            "amount": "Amount",
+            "expenses": "Expenses",
+            "date": "Date",
+            "description": "Description",
+            "supplier": "Supplier",
+            "method": "Method",
+            "name": "Name",
+            "remarks": "Remarks",
+            "inflow": "Inflow",
+            "outflow": "Outflow",
+            "balance": "Balance",
+        }
+        
+        result = sql
+        
+        # Replace column = 'value' with metadata->>'Column' ILIKE '%value%'
+        for col_lower, col_proper in metadata_columns.items():
+            # Pattern: column = 'value' or column = "value"
+            pattern = re.compile(
+                rf"\b{col_lower}\b\s*=\s*['\"]([^'\"]+)['\"]",
+                re.IGNORECASE
+            )
+            result = pattern.sub(
+                f"metadata->>'{col_proper}' ILIKE '%\\1%'",
+                result
+            )
+            
+            # Pattern: column LIKE '%value%'
+            pattern2 = re.compile(
+                rf"\b{col_lower}\b\s+LIKE\s+",
+                re.IGNORECASE
+            )
+            result = pattern2.sub(f"metadata->>'{col_proper}' ILIKE ", result)
+            
+            # Pattern: SUM(column) or COUNT(column)
+            pattern3 = re.compile(
+                rf"(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*{col_lower}\s*\)",
+                re.IGNORECASE
+            )
+            if col_lower in ("amount", "expenses", "inflow", "outflow", "balance"):
+                result = pattern3.sub(
+                    f"\\1((metadata->>'{col_proper}')::numeric)",
+                    result
+                )
+            else:
+                result = pattern3.sub(
+                    f"\\1(metadata->>'{col_proper}')",
+                    result
+                )
+        
+        # Ensure table is ai_documents (T5 might generate wrong table name)
+        result = re.sub(
+            r'\bFROM\s+\w+',
+            'FROM ai_documents',
+            result,
+            count=1,
+            flags=re.IGNORECASE
+        )
+        
+        # Add source_table filter if not present
+        source_table = intent.get("source_table", "Expenses")
+        if "source_table" not in result.lower():
+            if "WHERE" in result.upper():
+                result = result.replace("WHERE", f"WHERE source_table = '{source_table}' AND", 1)
+            else:
+                # Insert before ORDER BY, GROUP BY, LIMIT, or semicolon
+                insert_match = re.search(r'\s*(ORDER|GROUP|LIMIT|;)', result, re.IGNORECASE)
+                if insert_match:
+                    pos = insert_match.start()
+                    result = result[:pos] + f" WHERE source_table = '{source_table}'" + result[pos:]
+                else:
+                    result = result.rstrip(';') + f" WHERE source_table = '{source_table}';"
+        
+        return result
+
+    async def _generate_sql_with_mistral(self, query: str, intent: Dict[str, Any]) -> str:
+        """
+        STAGE 2 (Primary): Use Mistral to generate SQL from natural language query.
+
+        Mistral knows the schema context and JSONB patterns (metadata->>'key'),
+        which T5-small cannot handle. This is the primary SQL generation path.
+        """
+        import torch
+
+        source_table = intent.get("source_table", "Expenses")
+        filters = intent.get("filters", {})
+        intent_type = intent.get("intent_type", "query_data")
+
+        system_msg = (
+            "You are a PostgreSQL SQL generator for a construction company database. "
+            "Generate ONLY a valid SELECT query. Return ONLY the SQL, nothing else.\n\n"
+            f"DATABASE SCHEMA:\n{SCHEMA_CONTEXT}\n\n"
+            f"{EXAMPLE_QUERIES}\n\n"
+            f"{SAFETY_RULES}"
+        )
+
+        user_msg = (
+            f"Generate a SQL query for: \"{query}\"\n"
+            f"Intent type: {intent_type}\n"
+            f"Source table: {source_table}\n"
+            f"Detected filters: {json.dumps(filters)}\n\n"
+            "Return ONLY the SQL query, no explanation. Use ai_documents table only."
+        )
+
+        prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
+
+        try:
+            inputs = self.mistral_tokenizer(prompt, return_tensors="pt")
+            cuda_available = hasattr(torch, 'cuda') and torch.cuda.is_available()
+            if cuda_available:
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = self.mistral_model.generate(
+                    **inputs,
+                    max_new_tokens=300,
+                    temperature=0.1,
+                    do_sample=False,
+                    pad_token_id=self.mistral_tokenizer.eos_token_id
+                )
+
+            new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+            response = self.mistral_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            logger.info(f"Mistral SQL raw output: {response[:300]}")
+
+            # Extract SQL from response
+            sql = response.strip()
+
+            # Try to find SELECT statement in response
+            select_match = re.search(r'(SELECT\s+.+?;)', sql, re.DOTALL | re.IGNORECASE)
+            if select_match:
+                sql = select_match.group(1)
+            elif sql.upper().startswith("SELECT"):
+                if not sql.endswith(";"):
+                    sql += ";"
+            else:
+                raise GenerationError(f"Mistral did not generate valid SQL: {sql[:100]}")
+
+            logger.info(f"Mistral SQL cleaned: {sql}")
+            return sql
+
+        except GenerationError:
+            raise
+        except Exception as e:
+            logger.error(f"Mistral SQL generation error: {str(e)}")
+            raise GenerationError(f"Mistral SQL failed: {str(e)}")
+
     
     async def _format_response(
         self,

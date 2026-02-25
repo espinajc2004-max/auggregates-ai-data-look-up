@@ -123,6 +123,7 @@ async def chat_hybrid(request: ChatRequest):
                 session_id=session_id,
                 metadata={
                     "pipeline": "mistral+t5",
+                    "sql_source": result.get("sql_source", "unknown"),
                     "row_count": result.get("row_count", 0),
                     "sql": result.get("sql", ""),
                     "stage1_ms": result.get("stage1_time_ms"),
