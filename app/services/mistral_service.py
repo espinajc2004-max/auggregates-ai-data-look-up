@@ -278,7 +278,18 @@ class MistralService:
 
                 from app.services.intent_parser import parse_intent
                 from app.services.query_engine import QueryEngine
+                
+                # Use Mistral's already-detected intent type if available,
+                # instead of re-parsing from scratch (which may lose context)
+                mistral_intent_type = intent.get("intent_type", "")
                 rule_intent = parse_intent(query)
+                
+                # If Mistral detected a specific intent (e.g. list_files) but
+                # parse_intent fell back to general_search, trust Mistral
+                if mistral_intent_type and rule_intent.get("intent") == "general_search":
+                    rule_intent["intent"] = mistral_intent_type
+                    logger.info(f"Rule-based override: using Mistral intent '{mistral_intent_type}' instead of general_search")
+                
                 engine = QueryEngine()
                 rule_result = engine.execute(rule_intent)
                 data = rule_result.get("data", [])

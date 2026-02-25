@@ -131,10 +131,11 @@ def parse_intent(query: str) -> Dict[str, Any]:
     # 4b. LIST FILES intent — "show all files", "list expenses files"
     # ----------------------------------------------------------------
     list_files_patterns = [
-        r"(list|show|display|get)\b.*\b(all|my)?\s*(files|records|documents)",
-        r"(all|lahat)\b.*\b(files|records|documents)",
-        r"\b(files|records|documents)\s*(list|all|lahat)",
-        r"(list|show)\b.*\b(expenses?|cashflow)\s*(files|records)",
+        r"(list|show|display|get)\b.*\b(all|my)?\s*(files?|records?|documents?)",
+        r"(all|lahat)\b.*\b(files?|records?|documents?)",
+        r"\b(files?|records?|documents?)\s*(list|all|lahat)",
+        r"(list|show)\b.*\b(expenses?|cashflow)\s*(files?|records?)",
+        r"\blist\s+of\b.*\b(expenses?|files?)",
     ]
     if any(re.search(p, q_lower) for p in list_files_patterns):
         return {"intent": "list_files", "needs_clarification": False, "slots": slots}
