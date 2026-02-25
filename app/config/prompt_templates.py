@@ -185,6 +185,8 @@ def build_system_prompt(conversation_context: str = "") -> str:
         "",
         EXAMPLE_QUERIES.strip(),
         "",
+        JSON_INTENT_EXAMPLES.strip(),
+        "",
         SAFETY_RULES.strip(),
     ]
 
