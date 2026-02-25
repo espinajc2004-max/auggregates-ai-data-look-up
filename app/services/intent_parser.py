@@ -31,7 +31,7 @@ MONTH_MAP = {
     "april": 4, "apr": 4, "abril": 4,
     "may": 5, "mayo": 5,
     "june": 6, "jun": 6, "hunyo": 6,
-    "july": 7, "jul": 7, "hulyo": 7,
+    "july": 7, "jul": 7, "hulyo": 7, 
     "august": 8, "aug": 8, "agosto": 8,
     "september": 9, "sep": 9, "sept": 9, "setyembre": 9,
     "october": 10, "oct": 10, "oktubre": 10,
@@ -420,6 +420,27 @@ def _extract_multiple_files(text: str) -> List[str]:
     return []
 
 
+def _detect_source_table(text: str) -> Optional[str]:
+    """
+    Detect source_table from query context.
+    Returns 'Expenses' if user mentions expenses, 'CashFlow' if cashflow.
+    Returns None if ambiguous (return all).
+    """
+    text_lower = text.lower()
+    cashflow_words = ["cashflow", "cash flow", "cash-flow", "inflow", "outflow", "balance"]
+    expense_words = ["expense", "expenses", "gastos", "cost", "costs", "spending"]
+
+    has_cashflow = any(w in text_lower for w in cashflow_words)
+    has_expense = any(w in text_lower for w in expense_words)
+
+    if has_cashflow and not has_expense:
+        return "CashFlow"
+    if has_expense and not has_cashflow:
+        return "Expenses"
+    # If both or neither mentioned, return None (show all)
+    return None
+
+
 def _extract_search_term(text: str) -> Optional[str]:
     """Extract general search term after removing verbs."""
     for verb in ["show me", "find me", "get me", "show", "find", "get",
@@ -580,6 +601,10 @@ def parse_intent(query: str) -> Dict[str, Any]:
 
     # --- LIST FILES ---
     if intent_type == "list_files":
+        # Detect source_table from query context
+        source_table = _detect_source_table(q_lower)
+        if source_table:
+            slots["source_table"] = source_table
         return {"intent": "list_files", "needs_clarification": False, "slots": slots}
 
     # --- DATE FILTER ---

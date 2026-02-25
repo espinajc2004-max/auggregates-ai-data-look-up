@@ -132,24 +132,31 @@ class QueryEngine:
         }
 
     def _list_files(self, slots: Dict) -> Dict:
-        """List all parent file records (document_type = 'file')."""
+        """List parent file records (document_type = 'file'), filtered by source_table if specified."""
+        source_table = slots.get("source_table", "")
+
         params = {
             "document_type": "eq.file",
             "select": "id,file_name,project_name,source_table,searchable_text,metadata",
             "limit": "50"
         }
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
+
         rows = self._fetch(params)
 
         if not rows:
+            label = f"{source_table.lower()} " if source_table else ""
             return {
                 "data": [],
-                "message": "No expense files found in the system.",
+                "message": f"No {label}files found in the system.",
                 "row_count": 0
             }
 
+        label = f"{source_table.lower()} " if source_table else ""
         return {
             "data": rows,
-            "message": f"Found {len(rows)} expense file(s) in the system.",
+            "message": f"Found {len(rows)} {label}file(s) in the system.",
             "row_count": len(rows)
         }
 
