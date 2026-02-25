@@ -69,7 +69,7 @@ class QueryEngine:
             logger.error(f"[QueryEngine] Error executing {intent_type}: {e}", exc_info=True)
             return {
                 "data": [],
-                "message": f"May error sa paghahanap: {str(e)}",
+                "message": f"Error during search: {str(e)}",
                 "row_count": 0,
                 "intent": intent_type,
                 "error": str(e)
@@ -106,13 +106,13 @@ class QueryEngine:
         if not rows:
             return {
                 "data": [],
-                "message": f"Walang nakitang file na '{file_name}'. Siguro mali ang spelling?",
+                "message": f"No file found matching '{file_name}'. Please check the spelling.",
                 "row_count": 0
             }
 
         return {
             "data": rows,
-            "message": f"Nahanap ko ang {len(rows)} file(s) para sa '{file_name}'.",
+            "message": f"Found {len(rows)} file(s) for '{file_name}'.",
             "row_count": len(rows)
         }
 
@@ -142,13 +142,13 @@ class QueryEngine:
         if not rows:
             return {
                 "data": [],
-                "message": f"Walang '{search_text}' sa file na '{file_name}'.",
+                "message": f"No '{search_text}' found in file '{file_name}'.",
                 "row_count": 0
             }
 
         return {
             "data": rows,
-            "message": f"Nahanap ko ang {len(rows)} row(s) na may '{search_text}' sa '{file_name}'.",
+            "message": f"Found {len(rows)} row(s) matching '{search_text}' in '{file_name}'.",
             "row_count": len(rows)
         }
 
@@ -188,11 +188,11 @@ class QueryEngine:
                         categories.add(token.lower())
 
         cat_list = sorted(categories)
-        scope = f" sa '{file_name}'" if file_name else ""
+        scope = f" in '{file_name}'" if file_name else ""
 
         return {
             "data": [{"category": c} for c in cat_list],
-            "message": f"Nahanap ko ang {len(cat_list)} kategorya{scope}.",
+            "message": f"Found {len(cat_list)} categories{scope}.",
             "row_count": len(cat_list)
         }
 
@@ -204,7 +204,7 @@ class QueryEngine:
         if len(files) < 2:
             return {
                 "data": [],
-                "message": "Kailangan ng dalawang file para mag-compare. Anong dalawang file?",
+                "message": "Need two files to compare. Which two files do you want to compare?",
                 "row_count": 0,
                 "needs_clarification": True
             }
@@ -270,17 +270,17 @@ class QueryEngine:
 
         scope_parts = []
         if file_name:
-            scope_parts.append(f"sa '{file_name}'")
+            scope_parts.append(f"in '{file_name}'")
         if category:
-            scope_parts.append(f"na '{category}'")
+            scope_parts.append(f"with category '{category}'")
         if date_slot:
             scope_parts.append(self._date_label(date_slot))
 
-        scope = " ".join(scope_parts) or "lahat"
+        scope = " ".join(scope_parts) or "total"
 
         return {
             "data": [{"count": len(rows)}],
-            "message": f"May {len(rows)} rows {scope}.",
+            "message": f"{len(rows)} rows {scope}.",
             "row_count": len(rows)
         }
 
@@ -320,17 +320,17 @@ class QueryEngine:
 
         scope_parts = []
         if file_name:
-            scope_parts.append(f"sa '{file_name}'")
+            scope_parts.append(f"in '{file_name}'")
         if category:
-            scope_parts.append(f"na '{category}'")
+            scope_parts.append(f"for '{category}'")
         if date_slot:
             scope_parts.append(self._date_label(date_slot))
 
-        scope = " ".join(scope_parts) or "lahat"
+        scope = " ".join(scope_parts) or "overall"
 
         return {
             "data": [{"total": round(total, 2), "count": len(rows)}],
-            "message": f"Kabuuang halaga {scope}: ₱{total:,.2f} ({len(rows)} rows)",
+            "message": f"Total amount {scope}: ₱{total:,.2f} ({len(rows)} rows)",
             "row_count": len(rows)
         }
 
@@ -363,7 +363,7 @@ class QueryEngine:
 
         return {
             "data": rows,
-            "message": f"Nahanap ko ang {len(rows)} rows{scope}.",
+            "message": f"Found {len(rows)} rows{scope}.",
             "row_count": len(rows)
         }
 
@@ -379,7 +379,7 @@ class QueryEngine:
         if not search_term:
             return {
                 "data": [],
-                "message": "Hindi ko maintindihan ang query mo. Pwede mo bang i-rephrase?",
+                "message": "I couldn't understand your query. Could you please rephrase it?",
                 "row_count": 0,
                 "needs_clarification": True
             }
@@ -399,7 +399,7 @@ class QueryEngine:
         if len(file_names) == 0:
             return {
                 "data": [],
-                "message": f"Walang nakitang '{search_term}' sa kahit anong file.",
+                "message": f"No results found for '{search_term}' in any file.",
                 "row_count": 0
             }
         elif len(file_names) == 1:
@@ -412,8 +412,8 @@ class QueryEngine:
             return {
                 "data": [{"file_name": f} for f in file_names],
                 "message": (
-                    f"Nahanap ko ang '{search_term}' sa {len(file_names)} files: {file_list}. "
-                    f"Sa alin gusto mo? Specify the file name."
+                    f"Found '{search_term}' in {len(file_names)} files: {file_list}. "
+                    f"Which file do you want? Please specify the file name."
                 ),
                 "row_count": len(file_names),
                 "needs_clarification": True,
@@ -427,7 +427,7 @@ class QueryEngine:
         if not search_term:
             return {
                 "data": [],
-                "message": "Walang search term. Ano ang hinahanap mo?",
+                "message": "No search term provided. What are you looking for?",
                 "row_count": 0
             }
 
@@ -441,13 +441,13 @@ class QueryEngine:
         if not rows:
             return {
                 "data": [],
-                "message": f"Walang nakita para sa '{search_term}'.",
+                "message": f"No results found for '{search_term}'.",
                 "row_count": 0
             }
 
         return {
             "data": rows,
-            "message": f"Nahanap ko ang {len(rows)} results para sa '{search_term}'.",
+            "message": f"Found {len(rows)} results for '{search_term}'.",
             "row_count": len(rows)
         }
 
@@ -506,10 +506,10 @@ class QueryEngine:
         if not date_slot:
             return ""
         if date_slot.get("type") == "exact":
-            return f"noong {date_slot['value']}"
+            return f"on {date_slot['value']}"
         elif date_slot.get("type") == "month_range":
             from app.services.intent_parser import MONTH_MAP
             month_num = date_slot.get("month", 0)
             month_name = next((k for k, v in MONTH_MAP.items() if v == month_num and len(k) > 3), str(month_num))
-            return f"sa buwan ng {month_name.capitalize()}"
+            return f"in {month_name.capitalize()}"
         return ""

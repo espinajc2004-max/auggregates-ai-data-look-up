@@ -42,9 +42,11 @@ def get_mistral_service():
         return _mistral_service
 
     if _mistral_load_attempts >= _MAX_LOAD_ATTEMPTS:
+        logger.warning(f"[HYBRID] Mistral load exhausted all {_MAX_LOAD_ATTEMPTS} attempts, returning None")
         return None  # Exhausted retries
 
     if _mistral_loading:
+        logger.info("[HYBRID] Mistral is currently loading in another thread, returning None for now")
         return None  # Still loading
 
     try:
@@ -58,7 +60,7 @@ def get_mistral_service():
         logger.info("[HYBRID] Mistral+T5 pipeline loaded successfully")
         return _mistral_service
     except Exception as e:
-        logger.error(f"[HYBRID] Failed to load Mistral+T5 (attempt {_mistral_load_attempts}): {e}")
+        logger.error(f"[HYBRID] Failed to load Mistral+T5 (attempt {_mistral_load_attempts}): {e}", exc_info=True)
         return None
     finally:
         _mistral_loading = False
@@ -88,6 +90,14 @@ async def chat_hybrid(request: ChatRequest):
         session_id = getattr(request, "session_id", None)
 
         logger.info(f"[HYBRID] User: {user_id} | Query: {request.query}")
+
+        # Wait for background model loading if still in progress (up to 120s)
+        # This prevents falling back to rule-based just because the model is still downloading
+        import time as _time
+        wait_start = _time.time()
+        while _mistral_loading and (_time.time() - wait_start) < 120:
+            logger.info("[HYBRID] Waiting for background model loading to finish...")
+            await asyncio.sleep(2)
 
         # Try full AI pipeline first
         mistral = get_mistral_service()
@@ -147,6 +157,18 @@ async def chat_hybrid(request: ChatRequest):
             confidence=0.0,
             error=str(e)
         )
+
+
+@router.get("/chat/hybrid/status")
+async def model_status():
+    """Check model loading status — useful for debugging on Colab."""
+    return {
+        "mistral_loaded": _mistral_service is not None,
+        "loading_in_progress": _mistral_loading,
+        "load_attempts": _mistral_load_attempts,
+        "max_attempts": _MAX_LOAD_ATTEMPTS,
+        "pipeline": "mistral+t5" if _mistral_service is not None else "rule-based"
+    }
 
 
 async def _rule_based_fallback(request: ChatRequest, session_id: Optional[str]) -> ChatResponse:

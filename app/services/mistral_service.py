@@ -161,7 +161,7 @@ class MistralService:
                 logger.info(f"GPU Memory - Allocated: {memory_allocated:.2f}GB, Reserved: {memory_reserved:.2f}GB")
         
         except Exception as e:
-            logger.error(f"Failed to load Mistral model: {str(e)}")
+            logger.error(f"Failed to load Mistral model: {str(e)}", exc_info=True)
             raise ModelLoadError(f"Failed to load Mistral: {str(e)}")
     
     def _load_t5(self) -> None:
@@ -195,7 +195,7 @@ class MistralService:
             logger.info("T5 model loaded successfully")
         
         except Exception as e:
-            logger.error(f"Failed to load T5 model: {str(e)}")
+            logger.error(f"Failed to load T5 model: {str(e)}", exc_info=True)
             raise ModelLoadError(f"Failed to load T5: {str(e)}")
     
     async def process_query(
