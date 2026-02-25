@@ -32,7 +32,7 @@ class SQLValidator:
     
     # SQL injection patterns
     INJECTION_PATTERNS = [
-        r'--',  # SQL comment
+        r'(?<!>)--(?!>)',  # SQL comment (but NOT JSONB operator -->> or ->)
         r'/\*',  # Multi-line comment start
         r'\*/',  # Multi-line comment end
         r';\s*DROP',  # Command chaining with DROP
