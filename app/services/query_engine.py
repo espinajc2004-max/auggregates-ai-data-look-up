@@ -82,6 +82,8 @@ class QueryEngine:
     def _file_summary(self, slots: Dict) -> Dict:
         """Get summary/overview of a specific file."""
         file_name = slots.get("file_name", "")
+        
+        # Try 1: document_type = 'file'
         params = {
             "document_type": "eq.file",
             "select": "id,file_name,project_name,source_table,searchable_text,metadata",
@@ -92,8 +94,8 @@ class QueryEngine:
 
         rows = self._fetch(params)
 
+        # Try 2: maybe it's a project name (still file type)
         if not rows:
-            # Try broader search — maybe it's a project name
             params2 = {
                 "document_type": "eq.file",
                 "select": "id,file_name,project_name,source_table,searchable_text,metadata",
@@ -102,6 +104,16 @@ class QueryEngine:
             if file_name:
                 params2["project_name"] = f"ilike.*{file_name}*"
             rows = self._fetch(params2)
+
+        # Try 3: no document_type filter — some files only have 'row' entries
+        if not rows:
+            params3 = {
+                "select": "id,file_name,project_name,source_table,searchable_text,metadata",
+                "limit": "20"
+            }
+            if file_name:
+                params3["file_name"] = f"ilike.*{file_name}*"
+            rows = self._fetch(params3)
 
         if not rows:
             return {

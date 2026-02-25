@@ -440,18 +440,119 @@ class MistralService:
     
     async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> str:
         """
-        STAGE 2: Use T5 to generate SQL from natural language query.
+        STAGE 2: Generate SQL from Mistral's structured intent.
         
-        Mistral (Stage 1) already understood the user's intent.
-        Now we build a CLEAN, structured English instruction for T5
-        based on that intent — not the raw user query.
+        Strategy: Build SQL directly from intent (reliable) → fall back to T5 if needed.
+        
+        Mistral (Stage 1) already extracted: intent_type, source_table, filters, entities.
+        We have enough info to build correct SQL without T5 for most queries.
+        T5 is only used as fallback for edge cases.
         
         Args:
             query: Original natural language query from user
             intent: Structured intent from Stage 1 (Mistral's understanding)
             
         Returns:
-            Generated SQL query (post-processed for JSONB compatibility)
+            Generated SQL query (JSONB-compatible for ai_documents)
+        """
+        # Try direct SQL builder first (reliable, uses Mistral's structured intent)
+        try:
+            sql = self._build_direct_sql(intent)
+            if sql:
+                logger.info(f"Stage 2: Direct SQL from intent: {sql}")
+                return sql
+        except Exception as e:
+            logger.warning(f"Stage 2: Direct SQL builder failed: {e}")
+        
+        # Fallback: use T5 model
+        logger.info("Stage 2: Falling back to T5 model for SQL generation")
+        return await self._generate_sql_with_t5_model(query, intent)
+    
+    def _build_direct_sql(self, intent: Dict[str, Any]) -> Optional[str]:
+        """
+        Build SQL directly from Mistral's structured intent.
+        No T5 needed — we construct the query from the extracted fields.
+        
+        Returns SQL string or None if we can't build it directly.
+        """
+        source_table = intent.get("source_table", "Expenses")
+        intent_type = intent.get("intent_type", "query_data")
+        filters = intent.get("filters", {})
+        entities = intent.get("entities", [])
+        
+        # Build SELECT clause based on intent type
+        if intent_type == "sum":
+            select = "SELECT SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count"
+        elif intent_type == "count":
+            select = "SELECT COUNT(*) as count"
+        elif intent_type == "average":
+            select = "SELECT AVG((metadata->>'Expenses')::numeric) as average, COUNT(*) as count"
+        elif intent_type == "min":
+            select = "SELECT MIN((metadata->>'Expenses')::numeric) as minimum"
+        elif intent_type == "max":
+            select = "SELECT MAX((metadata->>'Expenses')::numeric) as maximum"
+        elif intent_type == "list_categories":
+            select = "SELECT DISTINCT metadata->>'Category' as category"
+        else:
+            # query_data, date_filter, etc. — return all columns
+            select = "SELECT id, file_name, project_name, source_table, searchable_text, metadata"
+        
+        # Build WHERE clause
+        where_parts = [f"source_table = '{source_table}'"]
+        
+        # File name filter
+        file_name = filters.get("file_name")
+        if file_name:
+            where_parts.append(f"file_name ILIKE '%{file_name}%'")
+        
+        # Project name filter
+        project_name = filters.get("project_name")
+        if project_name:
+            where_parts.append(f"project_name ILIKE '%{project_name}%'")
+        
+        # Category filter (metadata JSONB)
+        category = filters.get("category") or filters.get("metadata_value")
+        if category:
+            where_parts.append(f"metadata->>'Category' ILIKE '%{category}%'")
+        
+        # Supplier filter
+        supplier = filters.get("supplier")
+        if supplier:
+            where_parts.append(f"metadata->>'Supplier' ILIKE '%{supplier}%'")
+        
+        # Date filter
+        date_val = filters.get("date")
+        if date_val:
+            where_parts.append(f"metadata->>'Date' ILIKE '%{date_val}%'")
+        
+        # If no specific filters but we have entities, use searchable_text
+        has_specific_filter = any(filters.get(k) for k in ["file_name", "project_name", "category", "metadata_value", "supplier", "date"])
+        if not has_specific_filter and entities:
+            for entity in entities:
+                if entity and isinstance(entity, str):
+                    where_parts.append(f"searchable_text ILIKE '%{entity}%'")
+        
+        where_clause = " AND ".join(where_parts)
+        
+        # Build full SQL
+        sql = f"{select} FROM ai_documents WHERE {where_clause}"
+        
+        # Add GROUP BY for compare
+        if intent_type == "compare":
+            sql = f"SELECT metadata->>'Category' as category, SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count FROM ai_documents WHERE {where_clause} GROUP BY metadata->>'Category'"
+        
+        # Add LIMIT for data queries
+        if intent_type in ("query_data", "date_filter"):
+            sql += " LIMIT 50"
+        
+        sql += ";"
+        
+        logger.info(f"Direct SQL built: {sql}")
+        return sql
+    
+    async def _generate_sql_with_t5_model(self, query: str, intent: Dict[str, Any]) -> str:
+        """
+        Use T5 model to generate SQL (fallback when direct builder can't handle it).
         """
         source_table = intent.get("source_table", "Expenses")
         intent_type = intent.get("intent_type", "query_data")
