@@ -577,10 +577,23 @@ def parse_intent(query: str) -> Dict[str, Any]:
     slots = {}
 
     # Pre-check: if query mentions "file(s)" + a list/show word,
-    # route directly to list_files (avoids false positives from fuzzy matching)
+    # route to list_files UNLESS a specific file name + search term exists
+    # e.g. "show me the gcash in francis gays file" → find_in_file, not list_files
     if re.search(r'\bfiles?\b', q_lower):
         file_list_words = ["list", "show", "display", "get", "all", "what", "enumerate", "the"]
         if any(w in q_lower for w in file_list_words):
+            # Check if a specific file + search term exists → find_in_file
+            pre_file = _extract_single_file(q_lower)
+            pre_category = _extract_category(q_lower) if pre_file else None
+            pre_method = _extract_method(q_lower) if pre_file else None
+            if pre_file and (pre_category or pre_method):
+                slots["file_name"] = pre_file
+                if pre_category:
+                    slots["category"] = pre_category
+                if pre_method:
+                    slots["method"] = pre_method
+                return {"intent": "find_in_file", "needs_clarification": False, "slots": slots}
+            # No specific file or no search term → list_files
             source_table = _detect_source_table(q_lower)
             if source_table:
                 slots["source_table"] = source_table

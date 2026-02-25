@@ -32,7 +32,7 @@
 - CPU: 8 cores
 - RAM: 16GB
 - Storage: 20GB free space
-- GPU: NVIDIA GPU with 4GB+ VRAM (optional, for faster inference)
+- GPU: NVIDIA GPU with 16GB+ VRAM (e.g., T4) — required for optimal T5-LM-Large + Mistral-7B performance
 
 ### Software Requirements
 
@@ -87,18 +87,18 @@ pip install -r requirements.txt
 
 ```bash
 # Run model download script
-python scripts/download_models.py
+python scripts/install_hybrid_models.py
 ```
 
 This will download:
-- T5 Text-to-SQL model (~242MB)
+- T5-LM-Large-text2sql-spider model (~770MB) — `gaussalgo/T5-LM-Large-text2sql-spider` from HuggingFace
 - Enhanced DistilBERT Orchestrator (~250MB)
 
 ### Option 2: Manual Installation
 
 1. **T5 Model**:
-   - Download from Google Drive (link provided separately)
-   - Extract to `ml/models/t5_text_to_sql/`
+   - Downloaded automatically from HuggingFace: `gaussalgo/T5-LM-Large-text2sql-spider`
+   - Or set `T5_MODEL_PATH` in `.env` to a local path if pre-downloaded
 
 2. **DistilBERT Model**:
    - Download from Google Drive (link provided separately)
@@ -169,7 +169,7 @@ SUPABASE_SERVICE_KEY=your-service-key
 
 # T5 Configuration
 TEXT_TO_SQL_USE_T5=true
-T5_MODEL_PATH=ml/models/t5_text_to_sql
+T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider
 T5_CONFIDENCE_THRESHOLD=0.7
 
 # Orchestrator Configuration
@@ -335,8 +335,8 @@ docker logs -f <container-id>
 
 Monitor these metrics:
 - **Stage 1 Latency**: Target <50ms, Actual 70-85ms
-- **Stage 2 Latency**: Target <200ms, Actual ~2.6s (CPU)
-- **Total Pipeline**: Target <500ms, Actual ~2.8s (CPU)
+- **Stage 2 Latency**: Target <200ms, Actual ~200-300ms (GPU), ~2.6s (CPU fallback)
+- **Total Pipeline**: Target <500ms, Actual ~400-500ms (GPU), ~2.8s (CPU fallback)
 - **Memory Usage**: Monitor RAM consumption
 - **CPU Usage**: Monitor CPU utilization
 
@@ -411,14 +411,13 @@ FileNotFoundError: Model files not found
 ```
 
 **Solution**:
-1. Verify model files exist:
+1. Verify T5 model loads from HuggingFace:
    ```bash
-   ls ml/models/t5_text_to_sql/
-   ls ml/models/enhanced_orchestrator_model/
+   python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gaussalgo/T5-LM-Large-text2sql-spider')"
    ```
 2. Re-download models:
    ```bash
-   python scripts/download_models.py
+   python scripts/install_hybrid_models.py
    ```
 
 ### Issue: Slow Performance
@@ -427,11 +426,11 @@ FileNotFoundError: Model files not found
 
 **Solution**:
 1. Check CPU usage: `top` or Task Manager
-2. Enable GPU if available:
-   ```python
-   # In config.py
-   DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+2. Verify T5 model is loaded on GPU:
+   ```bash
+   python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
    ```
+   The T5-LM-Large model (`gaussalgo/T5-LM-Large-text2sql-spider`) loads on GPU automatically when CUDA is available. If running on CPU, expect ~2.6s per query for Stage 2.
 3. Consider model quantization
 
 ### Issue: Database Connection Failed
@@ -517,24 +516,31 @@ Before deploying to production:
 
 ### GPU Acceleration
 
-If GPU available:
+The T5-LM-Large model (`gaussalgo/T5-LM-Large-text2sql-spider`) loads on GPU by default with automatic CPU fallback:
 ```python
-# In app/config.py
+# Automatic in MistralService._load_t5()
+# GPU (CUDA) if available, CPU fallback with warning
 import torch
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 ```
 
-Expected speedup:
-- Stage 2 T5: 2.6s → 200-300ms (10x faster)
+Expected speedup with GPU:
+- Stage 2 T5: 2.6s (CPU) → 200-300ms (GPU) — ~10x faster
+
+VRAM budget on Colab T4 (16GB):
+- Mistral-7B (4-bit quantized): ~5-6 GB
+- T5-LM-Large: ~3 GB
+- PyTorch overhead: ~1 GB
+- Total: ~9-10 GB (well within 16GB)
 
 ### Model Quantization
 
 Reduce model size and improve speed:
 ```python
 # Quantize T5 model
-from transformers import T5ForConditionalGeneration
-model = T5ForConditionalGeneration.from_pretrained(
-    "ml/models/t5_text_to_sql",
+from transformers import AutoModelForSeq2SeqLM
+model = AutoModelForSeq2SeqLM.from_pretrained(
+    "gaussalgo/T5-LM-Large-text2sql-spider",
     load_in_8bit=True  # 8-bit quantization
 )
 ```

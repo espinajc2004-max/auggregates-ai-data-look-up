@@ -320,7 +320,7 @@ Add to `.env`:
 ```env
 # T5 Configuration
 TEXT_TO_SQL_USE_T5=true
-T5_MODEL_PATH=ml/models/t5_text_to_sql
+T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider
 T5_CONFIDENCE_THRESHOLD=0.7
 
 # Orchestrator Configuration
@@ -364,7 +364,7 @@ python scripts/download_models.py
 ```
 
 This downloads:
-- T5 Text-to-SQL model (~242MB)
+- T5 Text-to-SQL model (~770MB) — `gaussalgo/T5-LM-Large-text2sql-spider`
 - Enhanced DistilBERT Orchestrator (~250MB)
 
 ### Step 3: Update Configuration

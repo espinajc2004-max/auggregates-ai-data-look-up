@@ -19,7 +19,7 @@
    | `SUPABASE_KEY` | your supabase anon key |
    | `MISTRAL_MODEL` | `mistralai/Mistral-7B-Instruct-v0.2` |
    | `MISTRAL_QUANTIZATION` | `4bit` |
-   | `T5_MODEL_PATH` | `cssupport/t5-small-awesome-text-to-sql` |
+   | `T5_MODEL_PATH` | `gaussalgo/T5-LM-Large-text2sql-spider` |
    | `ALLOWED_TABLES` | `ai_documents,Project,conversations` |
 
 4. **Connect frontend** to:

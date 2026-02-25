@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\models\__init__.py
+# hypothesis_version: 6.151.4
+
+['CleanupResult', 'CleanupStats', 'ConversationContext', 'ReferenceIntent', 'ReferenceResolution', 'SemanticFeatures', 'Turn']

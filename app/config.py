@@ -76,7 +76,7 @@ class Config:
     
     # T5 Text-to-SQL Settings (ChatGPT-Style 3-Stage Architecture)
     TEXT_TO_SQL_USE_T5: bool = os.getenv("TEXT_TO_SQL_USE_T5", "true").lower() == "true"
-    T5_MODEL_PATH: str = os.getenv("T5_MODEL_PATH", "./ml/models/t5_text_to_sql")
+    T5_MODEL_PATH: str = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
     T5_CONFIDENCE_THRESHOLD: float = float(os.getenv("T5_CONFIDENCE_THRESHOLD", "0.7"))
     ALLOWED_TABLES: List[str] = os.getenv("ALLOWED_TABLES", "ai_documents,projects,conversations").split(",")
     

@@ -3,16 +3,16 @@ Mistral Service - Hybrid 3-stage architecture (Mistral → T5 → Mistral).
 
 Architecture:
   Mistral = Brain (understands user query, extracts intent, formats response)
-  T5 = SQL Converter (receives structured instruction from Mistral, generates SQL)
+  T5 = SQL Converter (sole SQL generator in Stage 2)
   Rule-based = Last resort fallback (ONLY fires when T5 errors out)
 
 Pipeline:
   Stage 1: Mistral extracts structured intent JSON from user query
-  Stage 2: T5 generates SQL from Mistral's structured intent → validate → execute
+  Stage 2: T5 generates SQL (only method) → validated → executed via Supabase
   Stage 3: Mistral formats query results into natural language response
 
 Fallback chain (Stage 2 only):
-  T5 SQL → rule-based (triggers on ValidationError, GenerationError, or execution error)
+  T5 SQL → raise exception → process_query catches → rule-based QueryEngine (last resort)
 """
 
 import re
@@ -22,7 +22,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from app.config.mistral_config import MistralConfig
-from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES, JSON_INTENT_EXAMPLES
+from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES, JSON_INTENT_EXAMPLES, build_stage1_prompt, build_stage3_prompt
 from app.services.mistral_context_manager import MistralContextManager
 from app.services.sql_validator import SQLValidator
 from app.services.supabase_client import get_supabase_client
@@ -46,15 +46,24 @@ class ValidationError(Exception):
     pass
 
 
+# Spider format schema for T5-LM-Large-text2sql-spider model input
+SPIDER_SCHEMA = (
+    "tables: ai_documents ("
+    "id, source_table, file_name, project_name, "
+    "searchable_text, metadata, document_type"
+    ") | query: "
+)
+
+
 class MistralService:
     """
     Hybrid 3-stage service: Mistral → T5 → Mistral.
     
     Mistral = Brain (understands query + formats response)
-    T5 = SQL Converter (receives structured intent from Mistral, not raw user query)
+    T5 = SQL Converter (sole SQL generator in Stage 2)
     
     Stage 1 (Mistral): Extract structured intent JSON from user query
-    Stage 2 (T5): Generate SQL from Mistral's structured intent → validate → execute
+    Stage 2 (T5): T5 generates SQL (only method) → validate → execute
     Stage 3 (Mistral): Format query results into natural language response
     
     Fallback: Rule-based engine (ONLY when T5 errors out in Stage 2)
@@ -91,17 +100,24 @@ class MistralService:
         self.t5_model = None
         self.t5_tokenizer = None
         self._t5_loaded = False
+        self._t5_device = "cpu"  # Default device, updated in _load_t5()
     
     def _load_model(self) -> None:
         """
         Load both Mistral 7B and T5 models.
         
         Raises:
-            ModelLoadError: If models fail to load
+            ModelLoadError: If Mistral fails to load.
+            T5 load failures are caught gracefully — the service continues
+            with rule-based fallback only.
         """
         # Load Mistral 7B (mistralai/Mistral-7B-Instruct-v0.2 with 4-bit quantization)
         self._load_mistral()
-        self._load_t5()
+        try:
+            self._load_t5()
+        except ModelLoadError as e:
+            logger.warning(f"T5 model failed to load — continuing without T5: {e}")
+            self._t5_loaded = False
     
     def _load_mistral(self) -> None:
         """
@@ -175,24 +191,35 @@ class MistralService:
             return
         
         try:
-            from transformers import T5ForConditionalGeneration, T5Tokenizer
+            from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+            import torch
             import os
             
             # T5 model path from environment (pre-trained text-to-SQL model)
-            t5_model_path = os.getenv("T5_MODEL_PATH", "cssupport/t5-small-awesome-text-to-sql")
+            t5_model_path = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
             
-            logger.info(f"Loading T5 text-to-SQL model from: {t5_model_path}")
+            # Detect local fine-tuned model vs HuggingFace identifier
+            if os.path.isdir(t5_model_path):
+                logger.info(f"Loading fine-tuned T5 from local: {t5_model_path}")
+            else:
+                logger.info(f"Loading base T5 from HuggingFace: {t5_model_path}")
+            
+            # Determine device: GPU if available, else CPU with warning
+            if torch.cuda.is_available():
+                device = "cuda"
+            else:
+                logger.warning("CUDA not available — loading T5 on CPU (slower inference)")
+                device = "cpu"
             
             # Load T5 tokenizer and model
-            self.t5_tokenizer = T5Tokenizer.from_pretrained(t5_model_path)
-            self.t5_model = T5ForConditionalGeneration.from_pretrained(t5_model_path)
-            
-            # Move to CPU (T5 is small enough to run on CPU)
-            self.t5_model = self.t5_model.to("cpu")
+            self.t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
+            self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
+            self.t5_model = self.t5_model.to(device)
             self.t5_model.eval()
+            self._t5_device = device  # Store for inference use
             
             self._t5_loaded = True
-            logger.info("T5 model loaded successfully")
+            logger.info(f"T5 model loaded successfully on {device}")
         
         except Exception as e:
             logger.error(f"Failed to load T5 model: {str(e)}", exc_info=True)
@@ -235,6 +262,18 @@ class MistralService:
                 return {
                     "response": intent.get("clarification_question", "Could you please clarify your question?"),
                     "needs_clarification": True,
+                    "query": query,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+            # Check for out-of-scope query
+            if intent.get("intent_type") == "out_of_scope":
+                message = intent.get("out_of_scope_message") or "I can only help with expense and cashflow data queries."
+                return {
+                    "response": message,
+                    "out_of_scope": True,
                     "query": query,
                     "conversation_id": conversation_id,
                     "user_id": user_id,
@@ -368,23 +407,17 @@ class MistralService:
         import torch
 
         # Mistral-7B-Instruct uses [INST]...[/INST] format
-        system_msg = (
-            "You are an AI assistant for a construction company expense management system. "
-            "Extract structured intent from user queries. "
-            "Return ONLY a valid JSON object, no explanation, no extra text.\n\n"
-            f"DATABASE SCHEMA:\n{SCHEMA_CONTEXT}\n\n"
-            f"{JSON_INTENT_EXAMPLES}\n\n"
-            f"{SAFETY_RULES}"
-        )
+        system_msg = build_stage1_prompt()
         user_msg = (
             f"Extract intent from this query: \"{query}\"\n\n"
             "Return a JSON object with these exact fields:\n"
-            "- intent_type: list_files | query_data | sum | count | average | compare | list_categories | date_filter\n"
+            "- intent_type: list_files | query_data | sum | count | average | compare | list_categories | date_filter | out_of_scope\n"
             "- source_table: 'Expenses' or 'CashFlow' (default 'Expenses' if unclear)\n"
             "- entities: list of key terms mentioned (file names, categories, project names)\n"
             "- filters: dict with any of: file_name, project_name, category, date, supplier\n"
             "- needs_clarification: true or false\n"
-            "- clarification_question: string (only if needs_clarification is true)\n\n"
+            "- clarification_question: string (only if needs_clarification is true)\n"
+            "- out_of_scope_message: string (only if intent_type is \"out_of_scope\")\n\n"
             "Return ONLY the JSON object. No explanation."
         )
 
@@ -443,199 +476,49 @@ class MistralService:
     
     async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> tuple:
         """
-        STAGE 2: Generate SQL from Mistral's structured intent.
-        
-        Strategy: Build SQL directly from intent (reliable) → fall back to T5 if needed.
-        
+        STAGE 2: Generate SQL — T5 only, no rule-based fallback.
+
         Returns:
-            Tuple of (sql_string, source_label) where source is "direct" or "t5"
+            Tuple of (sql_string, source_label) where source is always "t5"
+        Raises:
+            GenerationError: If T5 fails to generate SQL
+            ValidationError: If T5 output fails SQL validation
         """
-        # Try direct SQL builder first (reliable, uses Mistral's structured intent)
+        t5_start = time.time()
+
         try:
-            sql = self._build_direct_sql(intent)
-            if sql:
-                logger.info(f"Stage 2: Direct SQL from intent: {sql}")
-                return (sql, "direct")
+            sql = await self._generate_sql_with_t5_model(query, intent)
         except Exception as e:
-            logger.warning(f"Stage 2: Direct SQL builder failed: {e}")
-        
-        # Fallback: use T5 model
-        logger.info("Stage 2: Falling back to T5 model for SQL generation")
-        sql = await self._generate_sql_with_t5_model(query, intent)
+            t5_time_ms = (time.time() - t5_start) * 1000
+            logger.warning(f"Stage 2 T5 attempt failed in {t5_time_ms:.0f}ms: {e}")
+            raise GenerationError(f"T5 SQL generation failed: {e}")
+
+        t5_time_ms = (time.time() - t5_start) * 1000
+
+        # Validate T5 output
+        validation_result = self.sql_validator.validate(sql, role="user")
+        if not validation_result.is_valid:
+            logger.warning(
+                f"Stage 2 T5 SQL rejected by validator in {t5_time_ms:.0f}ms: "
+                f"{validation_result.errors} | SQL: {sql}"
+            )
+            raise ValidationError(
+                f"T5 SQL invalid: {', '.join(validation_result.errors or ['Invalid SQL'])}"
+            )
+
+        logger.info(f"Stage 2 T5 attempt: {t5_time_ms:.0f}ms")
+        logger.info(f"Stage 2: T5 SQL generated and validated (source=t5): {sql}")
         return (sql, "t5")
-    
-    def _build_direct_sql(self, intent: Dict[str, Any]) -> Optional[str]:
-        """
-        Build SQL directly from Mistral's structured intent.
-        No T5 needed — we construct the query from the extracted fields.
 
-        Returns SQL string or None if we can't build it directly.
-        """
-        source_table = intent.get("source_table", "Expenses")
-        intent_type = intent.get("intent_type", "query_data")
-        filters = intent.get("filters", {})
-        entities = intent.get("entities", [])
-
-        # Build SELECT clause based on intent type
-        if intent_type == "list_files":
-            select = "SELECT id, file_name, project_name, source_table, searchable_text, metadata"
-        elif intent_type == "sum":
-            select = "SELECT SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count"
-        elif intent_type == "count":
-            select = "SELECT COUNT(*) as count"
-        elif intent_type == "average":
-            select = "SELECT AVG((metadata->>'Expenses')::numeric) as average, COUNT(*) as count"
-        elif intent_type == "min":
-            select = "SELECT MIN((metadata->>'Expenses')::numeric) as minimum"
-        elif intent_type == "max":
-            select = "SELECT MAX((metadata->>'Expenses')::numeric) as maximum"
-        elif intent_type == "list_categories":
-            select = "SELECT DISTINCT metadata->>'Category' as category"
-        else:
-            # query_data, date_filter, etc. — return all columns
-            select = "SELECT id, file_name, project_name, source_table, searchable_text, metadata"
-
-        # Build WHERE clause
-        where_parts = [f"source_table = '{source_table}'"]
-
-        # list_files: always filter to parent file records only, skip row-level filters
-        if intent_type == "list_files":
-            where_parts.append("document_type = 'file'")
-            where_clause = " AND ".join(where_parts)
-            sql = f"{select} FROM ai_documents WHERE {where_clause} LIMIT 50;"
-            logger.info(f"Direct SQL built (list_files): {sql}")
-            return sql
-
-        # File name filter
-        file_name = filters.get("file_name")
-        if file_name:
-            where_parts.append(f"file_name ILIKE '%{file_name}%'")
-
-        # Project name filter
-        project_name = filters.get("project_name")
-        if project_name:
-            where_parts.append(f"project_name ILIKE '%{project_name}%'")
-
-        # Category filter (metadata JSONB)
-        category = filters.get("category") or filters.get("metadata_value")
-        if category:
-            where_parts.append(f"metadata->>'Category' ILIKE '%{category}%'")
-
-        # Supplier filter
-        supplier = filters.get("supplier")
-        if supplier:
-            where_parts.append(f"metadata->>'Supplier' ILIKE '%{supplier}%'")
-
-        # Date filter
-        date_val = filters.get("date")
-        if date_val:
-            where_parts.append(f"metadata->>'Date' ILIKE '%{date_val}%'")
-
-        # Determine if this is a "file lookup" vs "data query"
-        # File lookup: user wants the parent file record (e.g., "show me francis gays file")
-        # Data query: user wants rows inside a file (e.g., "show fuel expenses in francis gays")
-        has_row_filter = any(filters.get(k) for k in ["category", "metadata_value", "supplier", "date"])
-        is_file_lookup = file_name and not has_row_filter and intent_type == "query_data"
-
-        if is_file_lookup:
-            # Only return the parent file record, not individual rows
-            where_parts.append("document_type = 'file'")
-        else:
-            # ALL data queries (sum, count, query_data with filters, date_filter, etc.)
-            # must filter to row-level records only — never include file records in data results
-            where_parts.append("document_type = 'row'")
-
-        # If no specific filters but we have entities, use searchable_text
-        has_specific_filter = any(filters.get(k) for k in ["file_name", "project_name", "category", "metadata_value", "supplier", "date"])
-        if not has_specific_filter and entities:
-            for entity in entities:
-                if entity and isinstance(entity, str):
-                    where_parts.append(f"searchable_text ILIKE '%{entity}%'")
-
-        where_clause = " AND ".join(where_parts)
-
-        # Build full SQL
-        sql = f"{select} FROM ai_documents WHERE {where_clause}"
-
-        # Add GROUP BY for compare
-        if intent_type == "compare":
-            sql = f"SELECT metadata->>'Category' as category, SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count FROM ai_documents WHERE {where_clause} GROUP BY metadata->>'Category'"
-
-        # Add LIMIT for data queries
-        if intent_type in ("query_data", "date_filter"):
-            sql += " LIMIT 50"
-
-        sql += ";"
-
-        logger.info(f"Direct SQL built: {sql}")
-        return sql
-
-    
     async def _generate_sql_with_t5_model(self, query: str, intent: Dict[str, Any]) -> str:
         """
-        Use T5 model to generate SQL (fallback when direct builder can't handle it).
+        Use T5 model to generate SQL from natural language query.
+        Uses Spider format input with the raw user query.
         """
-        source_table = intent.get("source_table", "Expenses")
-        intent_type = intent.get("intent_type", "query_data")
-        filters = intent.get("filters", {})
-        entities = intent.get("entities", [])
+        # Spider format: pass raw user query to the Spider-trained model
+        t5_input = SPIDER_SCHEMA + query
         
-        # Build a STRUCTURED query instruction for T5 based on Mistral's understanding
-        # This is the key handoff: Mistral brain → T5 SQL converter
-        structured_parts = []
-        
-        # What operation? Mistral tells T5 exactly what computation to do
-        if intent_type == "sum":
-            structured_parts.append("select sum of expenses")
-        elif intent_type == "count":
-            structured_parts.append("select count")
-        elif intent_type == "average":
-            structured_parts.append("select avg of expenses")
-        elif intent_type == "min":
-            structured_parts.append("select min of expenses")
-        elif intent_type == "max":
-            structured_parts.append("select max of expenses")
-        elif intent_type == "compare":
-            structured_parts.append("select category, sum of expenses")
-        elif intent_type == "list_categories":
-            structured_parts.append("select distinct category")
-        elif intent_type == "date_filter":
-            structured_parts.append("select all columns")
-        else:
-            structured_parts.append("select all columns")
-        
-        structured_parts.append(f"from ai_documents where source_table = '{source_table}'")
-        
-        # Add filters from Mistral's understanding
-        if filters.get("file_name"):
-            structured_parts.append(f"and file_name like '%{filters['file_name']}%'")
-        if filters.get("project_name"):
-            structured_parts.append(f"and project_name like '%{filters['project_name']}%'")
-        if filters.get("category") or filters.get("metadata_value"):
-            cat = filters.get("category") or filters.get("metadata_value")
-            structured_parts.append(f"and category = '{cat}'")
-        if filters.get("supplier"):
-            structured_parts.append(f"and supplier = '{filters['supplier']}'")
-        if filters.get("date"):
-            structured_parts.append(f"and date like '%{filters['date']}%'")
-        
-        # If no specific filters but we have entities, use them
-        if not any(filters.get(k) for k in ["file_name", "project_name", "category", "metadata_value", "supplier", "date"]):
-            for entity in entities:
-                if entity:
-                    structured_parts.append(f"and searchable_text like '%{entity}%'")
-        
-        structured_query = " ".join(structured_parts)
-        
-        # T5 input format: tables + structured query from Mistral
-        t5_input = (
-            f"tables: ai_documents (source_table, source_id, file_id, file_name, "
-            f"project_id, project_name, searchable_text, metadata, category, expenses, date, description, supplier) | "
-            f"query: {structured_query}"
-        )
-        
-        logger.info(f"T5 structured query from Mistral: {structured_query}")
-        logger.info(f"T5 input: {t5_input}")
+        logger.info(f"T5 Spider format input: {t5_input}")
         
         try:
             import torch
@@ -647,12 +530,14 @@ class MistralService:
                 max_length=512,
                 truncation=True
             )
+            # Move input tensors to the same device as the T5 model
+            inputs = {k: v.to(self._t5_device) for k, v in inputs.items()}
             
             # Generate SQL
             with torch.no_grad():
                 outputs = self.t5_model.generate(
-                    inputs.input_ids,
-                    max_length=256,
+                    inputs["input_ids"],
+                    max_length=512,
                     num_beams=4,
                     early_stopping=True
                 )
@@ -792,7 +677,7 @@ class MistralService:
         else:
             data_summary = f"EXACTLY {len(data)} rows returned. Showing first 5:\n{json.dumps(data[:5], default=str)}"
 
-        system_msg = SYSTEM_IDENTITY.strip()
+        system_msg = build_stage3_prompt()
         user_msg = (
             f"User asked: \"{query}\"\n"
             f"Database returned: {data_summary}\n\n"

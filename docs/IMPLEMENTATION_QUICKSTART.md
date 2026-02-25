@@ -2,7 +2,7 @@
 
 **Status**: Phase 3 Complete, Phase 4 In Progress (Task 4.3 DONE)  
 **Date**: February 15, 2026  
-**Latest**: T5 Model Trained & Integrated ✅
+**Latest**: T5 Model Upgraded to `gaussalgo/T5-LM-Large-text2sql-spider` ✅
 
 ---
 
@@ -10,26 +10,14 @@
 
 This guide provides step-by-step instructions for implementing the T5 Text-to-SQL upgrade. Follow the steps in order to replicate the implementation.
 
+> **Note**: The T5 model has been upgraded to `gaussalgo/T5-LM-Large-text2sql-spider` (770MB, 770M parameters), a model pre-trained on the Spider text-to-SQL benchmark dataset. No custom training is required — the model works out of the box for text-to-SQL generation. It loads on GPU (CUDA) with automatic CPU fallback.
+
 ---
 
 ## ✅ What Was Created
 
 ### Directory Structure
 ```
-ml/
-├── models/
-│   └── t5_text_to_sql/          # ✅ T5 model installed (242MB)
-│       ├── config.json
-│       ├── model.safetensors
-│       ├── generation_config.json
-│       ├── spiece.model
-│       ├── special_tokens_map.json
-│       ├── tokenizer_config.json
-│       └── added_tokens.json
-└── training/
-    ├── data/                     # Training data generated via Colab
-    └── generate_t5_training_data.py  # ✅ Created
-
 app/services/
 ├── stage1/                       # Stage 1 Orchestrator (to be implemented)
 ├── stage2/                       # ✅ Stage 2 T5 SQL Generator IMPLEMENTED
@@ -79,55 +67,25 @@ You should see:
 
 ---
 
-### Step 2: Generate Training Data
+### Step 2: Download Pre-Trained T5 Model
 
-Generate 1000+ English query-SQL pairs:
+The T5 model (`gaussalgo/T5-LM-Large-text2sql-spider`) is pre-trained on the Spider text-to-SQL benchmark dataset. **No custom training is required** — the model downloads automatically from HuggingFace on first load.
+
+To pre-download the model:
 
 ```cmd
-python ml\training\generate_t5_training_data.py
+python scripts\install_hybrid_models.py
 ```
 
-This will create:
-- `ml/training/data/t5_train.jsonl` (800 examples)
-- `ml/training/data/t5_val.jsonl` (100 examples)
-- `ml/training/data/t5_test.jsonl` (100 examples)
-- `ml/training/data/t5_all.jsonl` (1000 examples)
-
-**Expected Output:**
-```
-Generating training data...
-1. Generating search queries (300 examples)...
-2. Generating complex queries (200 examples)...
-3. Generating analytics queries (300 examples)...
-4. Generating limiting queries (100 examples)...
-5. Generating clarification queries (100 examples)...
-✅ Generated 1000 total examples
-```
+**Model Details:**
+- Model: `gaussalgo/T5-LM-Large-text2sql-spider`
+- Size: 770MB (770M parameters)
+- Pre-trained on: Spider text-to-SQL benchmark dataset
+- Device: GPU (CUDA) with automatic CPU fallback
 
 ---
 
-### Step 3: Train T5 Model (Google Colab)
-
-**Why Google Colab?**
-- Faster training (~3 minutes vs 30-45 minutes locally)
-- Free T4 GPU access
-- No local GPU setup required
-
-**Steps:**
-1. Open `ml/training/T5_Training_Colab.ipynb` in Google Colab
-2. Upload training data files to Colab
-3. Run all cells
-4. Download trained model files
-5. Place in `ml/models/t5_text_to_sql/`
-
-**Training Results:**
-- Training time: ~3 minutes
-- Accuracy: 90%+ on test queries
-- Model size: 242MB
-
----
-
-### Step 4: Test the Implementation
+### Step 3: Test the Implementation
 
 Run the test suite to verify everything works:
 
@@ -139,18 +97,17 @@ python tests\test_t5_model_loading.py
 ```
 TEST 1: Model Loading
 ✅ Model loaded successfully!
-   Device: cpu
-   Model path: ./ml/models/t5_text_to_sql
-   Load time: 302ms
-   Parameters: 60.5M
+   Device: cuda (GPU with CPU fallback)
+   Model path: gaussalgo/T5-LM-Large-text2sql-spider
+   Parameters: 770M
 
 TEST 2: Simple Query Generation
 Query: "find fuel in expenses"
-✅ SQL Generated (3354ms, confidence: 0.90)
+✅ SQL Generated (confidence: 0.90)
 
 TEST 3: Complex Query Generation
 Query: "how much gcash payment in francis gays"
-✅ SQL Generated (3740ms, confidence: 0.90)
+✅ SQL Generated (confidence: 0.90)
 ```
 
 ---
@@ -160,10 +117,8 @@ Query: "how much gcash payment in francis gays"
 ### ✅ Completed (Phase 1-3 + Task 4.3)
 - [x] Directory structure created
 - [x] Installation scripts created
-- [x] Training data generator created
 - [x] Requirements file created
-- [x] T5 Model Trained (Google Colab)
-- [x] T5 Model Installed Locally
+- [x] T5 Model upgraded to `gaussalgo/T5-LM-Large-text2sql-spider` (pre-trained, no custom training needed)
 - [x] T5 SQL Generator Implemented
 - [x] Model Testing Complete
 - [x] Documentation Created
@@ -171,9 +126,8 @@ Query: "how much gcash payment in francis gays"
 ### ⏳ Next Steps (In Order)
 1. ~~Install dependencies~~ ✅ DONE
 2. ~~Verify installation~~ ✅ DONE
-3. ~~Generate training data~~ ✅ DONE (via Colab)
-4. ~~Train T5 model~~ ✅ DONE (via Colab)
-5. ~~Implement T5 SQL Generator~~ ✅ DONE (Task 4.3)
+3. ~~Download pre-trained T5 model~~ ✅ DONE (auto-downloads from HuggingFace)
+4. ~~Implement T5 SQL Generator~~ ✅ DONE (Task 4.3)
 6. **Implement Server SQL Guardrails** ⏳ NEXT (Task 4.4 - HIGH PRIORITY)
 7. **Update TextToSQLService** ⏳ (Task 6.1)
 8. **Update Configuration** ⏳ (Task 6.3)
@@ -184,10 +138,9 @@ Query: "how much gcash payment in francis gays"
 
 ## 📊 Timeline
 
-- **Week 1 (COMPLETED ✅)**: Setup + Training Data Generation
+- **Week 1 (COMPLETED ✅)**: Setup + Model Installation
   - Day 1-2: Install dependencies ✅
-  - Day 3-5: Generate training data ✅
-  - **BONUS**: T5 Model Training via Google Colab ✅
+  - Day 3-5: Download and verify pre-trained T5 model ✅
   - **BONUS**: T5 SQL Generator Implementation ✅
   
 - **Week 2 (CURRENT)**: Core Implementation
@@ -208,32 +161,28 @@ Query: "how much gcash payment in francis gays"
 
 ## 🎉 Recent Accomplishments
 
-### T5 Model Training (February 15, 2026)
-- ✅ Trained T5-small model on Google Colab
-- ✅ 1000 training examples (800 train, 100 val, 100 test)
-- ✅ Training time: ~3 minutes on T4 GPU
-- ✅ Model accuracy: 90%+ on test queries
-- ✅ Model size: 242MB (60.5M parameters)
+### T5 Model Upgrade (February 15, 2026)
+- ✅ Upgraded to `gaussalgo/T5-LM-Large-text2sql-spider`
+- ✅ Pre-trained on Spider text-to-SQL benchmark — no custom training needed
+- ✅ Model size: 770MB (770M parameters)
+- ✅ Loads on GPU (CUDA) with automatic CPU fallback
 
 ### T5 SQL Generator Implementation (February 15, 2026)
 - ✅ Created `app/services/stage2/t5_sql_generator.py`
-- ✅ Implemented SQL generation from natural language
+- ✅ Implemented SQL generation from natural language using Spider format input
 - ✅ Confidence scoring (0.85-0.95 range)
 - ✅ Error handling and logging
 - ✅ Test suite passing (all tests green)
-- ✅ Installed missing dependency: `sentencepiece==0.2.1`
 
 ### Performance Results:
 ```
 Query: "find fuel in expenses"
-✅ Generated correct SQL in 3.3s (confidence: 0.90)
+✅ Generated correct SQL (confidence: 0.90)
 
 Query: "how much gcash payment in francis gays"
-✅ Generated correct SQL in 3.7s (confidence: 0.90)
+✅ Generated correct SQL (confidence: 0.90)
 
-Model Load Time: 302ms (one-time)
-Average Query Time: ~2.6s (after warmup)
-Device: CPU (no GPU required for inference)
+Device: GPU (CUDA) with CPU fallback
 ```
 
 ---

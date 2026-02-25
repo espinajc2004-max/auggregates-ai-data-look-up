@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\models\conversation.py
+# hypothesis_version: 6.151.4
+
+['Turn', 'best_match', 'confidence', 'created_at', 'current_query', 'errors', 'execution_time', 'history', 'id', 'indicators', 'intent_type', 'is_ambiguous', 'last_cleanup', 'matched_turns', 'metadata', 'needs_clarification', 'ordinal_positions', 'query', 'query_text', 'referenced_turns', 'relative_positions', 'response_text', 'session_id', 'sessions_deleted', 'temporal_indicators', 'timestamp', 'topic_keywords', 'total_cleanups', 'total_turns_deleted', 'turn_number', 'turns_deleted', 'user_id']

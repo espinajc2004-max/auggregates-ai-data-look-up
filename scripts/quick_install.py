@@ -73,23 +73,24 @@ def check_t5_model():
     print_header("Checking T5 Model")
     
     import os
-    t5_path = os.getenv("T5_MODEL_PATH", "ml/models/t5-construction-sql")
+    t5_path = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
     
-    # Also check if path exists as absolute or relative
+    # Check if it's a local path that exists
     if os.path.exists(t5_path):
-        print(f"✓ T5 model found at: {t5_path}")
+        print(f"✓ T5 model found locally at: {t5_path}")
         return True
     
-    # Check alternative paths
-    alt_paths = [
-        "ml/models/t5-base-temp",
-        "ml/models/t5-construction-sql"
-    ]
-    
-    for alt_path in alt_paths:
-        if os.path.exists(alt_path):
-            print(f"✓ T5 model found at: {alt_path}")
-            print(f"  (Update T5_MODEL_PATH={alt_path} in .env)")
+    # For HuggingFace model identifiers, try to verify availability
+    if "/" in t5_path:
+        try:
+            from transformers import AutoTokenizer
+            AutoTokenizer.from_pretrained(t5_path, local_files_only=True)
+            print(f"✓ T5 model cached locally: {t5_path}")
+            return True
+        except Exception:
+            print(f"⚠️  T5 model not cached locally: {t5_path}")
+            print(f"  The model will be downloaded from HuggingFace on first use")
+            print(f"  To pre-download: python -c \"from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; AutoTokenizer.from_pretrained('{t5_path}'); AutoModelForSeq2SeqLM.from_pretrained('{t5_path}')\"")
             return True
     
     print(f"✗ T5 model NOT found at: {t5_path}")
@@ -97,9 +98,9 @@ def check_t5_model():
     print("T5 MODEL REQUIRED")
     print("─" * 60)
     print("\nOptions:")
-    print("1. Copy your trained T5 model to: ml/models/t5-construction-sql/")
-    print("2. Set T5_MODEL_PATH environment variable")
-    print("3. Use base T5 (not trained): T5_MODEL_PATH=t5-base")
+    print("1. Set T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider in .env")
+    print("   (recommended — pre-trained on Spider text-to-SQL dataset)")
+    print("2. Set T5_MODEL_PATH to a custom local model path")
     print("\n" + "─" * 60)
     return False
 

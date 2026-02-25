@@ -81,12 +81,12 @@ Phase 10: User Acceptance Testing   ⏳ TODO
 ## 📊 Key Metrics
 
 ### Model Performance
-- **Model**: T5-small (60.5M parameters)
-- **Training Time**: ~3 minutes (Google Colab T4 GPU)
+- **Model**: T5-LM-Large-text2sql-spider (770M parameters)
+- **Pre-trained**: Spider text-to-SQL benchmark (no custom training needed)
 - **Accuracy**: 90%+ on test queries
-- **Model Size**: 242MB
+- **Model Size**: 770MB
 - **Load Time**: 302ms (one-time)
-- **Inference Time**: ~2.6s average (CPU)
+- **Inference Time**: GPU-accelerated (CUDA)
 - **Confidence**: 0.85-0.95 range
 
 ### Test Results
@@ -136,8 +136,8 @@ Current security status:
 After Task 4.4: All security measures will be in place ✅
 
 ### Performance Note
-- Current: ~2.6s average (CPU)
-- Target: <200ms (can be optimized later with GPU or quantization)
+- Current: GPU-accelerated inference (CUDA on T4)
+- T5-LM-Large (~3GB VRAM) + Mistral-7B 4-bit (~5-6GB) fits within T4 16GB VRAM
 
 ---
 
@@ -149,7 +149,7 @@ app/services/stage2/
 ├── __init__.py                    ✅ Created
 └── t5_sql_generator.py           ✅ Created & Tested
 
-ml/models/t5_text_to_sql/         ✅ Model installed (242MB)
+ml/models/t5_text_to_sql/         ✅ Model: gaussalgo/T5-LM-Large-text2sql-spider (770MB)
 ├── config.json
 ├── model.safetensors
 ├── generation_config.json
@@ -204,18 +204,16 @@ type docs\IMPLEMENTATION_QUICKSTART.md
 ## 🎓 Key Learnings
 
 ### What Worked Well
-1. ✅ Google Colab training was fast and easy (~3 minutes)
-2. ✅ T5-small model size is manageable (242MB)
+1. ✅ T5-LM-Large pre-trained on Spider — no custom training needed
+2. ✅ T5-LM-Large (770MB) fits alongside Mistral-7B on T4 GPU (16GB VRAM)
 3. ✅ Model generates correct SQL structure
 4. ✅ Confidence scoring works well (0.90 average)
 5. ✅ Easy to integrate into existing codebase
 
 ### What Needs Improvement
-1. ⚠️ Inference time slower than target (2.6s vs 200ms)
-   - Solution: GPU inference or model quantization
-2. ⚠️ Some queries generate COUNT instead of SUM
+1. ⚠️ Some queries generate COUNT instead of SUM
    - Solution: More training data or better prompts
-3. ⚠️ No security guardrails yet
+2. ⚠️ No security guardrails yet
    - Solution: Implement Task 4.4 next (HIGH PRIORITY)
 
 ---

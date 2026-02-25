@@ -134,18 +134,21 @@ def check_t5_model():
     """Check if T5 model exists."""
     print_header("Step 4: Checking T5 Model")
     
-    t5_path = os.getenv("T5_MODEL_PATH", "ml/models/t5-construction-sql")
+    t5_path = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
     
-    if os.path.exists(t5_path):
-        print(f"✓ T5 model found at: {t5_path}")
+    # For HuggingFace model IDs, try loading directly
+    is_hf_model = "/" in t5_path and not os.path.exists(t5_path)
+    
+    if os.path.exists(t5_path) or is_hf_model:
+        print(f"✓ T5 model path: {t5_path}")
         
         # Try to load it
         try:
-            from transformers import T5Tokenizer, T5ForConditionalGeneration
+            from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
             
             print("  Testing T5 model loading...")
-            tokenizer = T5Tokenizer.from_pretrained(t5_path)
-            model = T5ForConditionalGeneration.from_pretrained(t5_path)
+            tokenizer = AutoTokenizer.from_pretrained(t5_path)
+            model = AutoModelForSeq2SeqLM.from_pretrained(t5_path)
             
             print("✓ T5 model loads successfully!")
             
@@ -157,23 +160,24 @@ def check_t5_model():
             
         except Exception as e:
             print(f"✗ Error loading T5 model: {e}")
-            print("  The model directory exists but may be corrupted")
+            if is_hf_model:
+                print("  The model could not be downloaded from HuggingFace")
+                print("  Check your internet connection and model identifier")
+            else:
+                print("  The model directory exists but may be corrupted")
             return False
     else:
         print(f"✗ T5 model NOT found at: {t5_path}")
         print("\n" + "─" * 60)
         print("T5 MODEL SETUP REQUIRED")
         print("─" * 60)
-        print("\nYou have 3 options:")
-        print("\n1. Use a pre-trained T5 model:")
-        print("   - Copy your trained T5 model to: ml/models/t5-construction-sql/")
-        print("   - Or set T5_MODEL_PATH environment variable")
-        print("\n2. Use a base T5 model (not trained for construction):")
-        print("   - Set T5_MODEL_PATH=t5-base in your .env file")
-        print("   - This will work but won't understand construction terms")
-        print("\n3. Train a new T5 model:")
-        print("   - You'll need training data (query-SQL pairs)")
-        print("   - See: https://huggingface.co/docs/transformers/model_doc/t5")
+        print("\nRecommended: Use the pre-trained Spider text-to-SQL model:")
+        print("   Set T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider in your .env file")
+        print("   This model is pre-trained on the Spider dataset and requires no custom training")
+        print("   It will be downloaded automatically from HuggingFace (~770MB)")
+        print("\nAlternatively:")
+        print("   - Set T5_MODEL_PATH to a local directory containing a compatible T5 model")
+        print("   - Or set T5_MODEL_PATH to another HuggingFace model identifier")
         print("\n" + "─" * 60)
         
         return False
@@ -220,7 +224,7 @@ MISTRAL_TEMPERATURE=0.1
 MISTRAL_MAX_TOKENS=512
 
 # T5 Configuration
-T5_MODEL_PATH=ml/models/t5-construction-sql
+T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider
 
 # Database Configuration
 DATABASE_URL=postgresql://user:pass@localhost:5432/construction_db
@@ -294,6 +298,7 @@ def main():
         
         if not results["t5"]:
             print("\n⚠️  CRITICAL: T5 model is required for the hybrid architecture")
+            print("   Set T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider in .env")
             print("   See Step 4 output for setup instructions")
 
 

@@ -180,75 +180,75 @@ JSON: [/INST]"""
 def test_t5(intent: dict):
     header("STAGE 2: T5 Load + SQL Generation")
 
-    t5_path = os.getenv("T5_MODEL_PATH", "cssupport/t5-small-awesome-text-to-sql")
+    t5_path = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
     info(f"T5 model: {t5_path}")
 
+    # Spider format schema for the ai_documents table
+    SPIDER_SCHEMA = (
+        "tables: ai_documents ("
+        "id, source_table, file_name, project_name, "
+        "searchable_text, metadata, document_type"
+        ") | query: "
+    )
+
     try:
-        from transformers import T5ForConditionalGeneration, T5Tokenizer
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
         import torch
+
+        # Determine device: GPU if available, else CPU with warning
+        if torch.cuda.is_available():
+            device = "cuda"
+            ok(f"CUDA available — loading T5 on GPU ({torch.cuda.get_device_name(0)})")
+        else:
+            device = "cpu"
+            fail("CUDA not available — loading T5 on CPU (slower inference)")
 
         info("Loading T5 tokenizer...")
         t0 = time.time()
-        tokenizer = T5Tokenizer.from_pretrained(t5_path)
+        tokenizer = AutoTokenizer.from_pretrained(t5_path)
         ok(f"T5 tokenizer loaded in {time.time()-t0:.1f}s")
 
         info("Loading T5 model...")
         t0 = time.time()
-        model = T5ForConditionalGeneration.from_pretrained(t5_path)
-        model = model.to("cpu")
+        model = AutoModelForSeq2SeqLM.from_pretrained(t5_path)
+        model = model.to(device)
         model.eval()
-        ok(f"T5 model loaded in {time.time()-t0:.1f}s")
+        ok(f"T5 model loaded on {device} in {time.time()-t0:.1f}s")
 
-        # Test SQL generation
-        if intent:
-            info("Testing SQL generation from Mistral intent...")
-            intent_text = json.dumps(intent)
-            t5_input = f"translate intent to SQL: {intent_text}"
-            info(f"T5 input: {t5_input[:100]}...")
+        if torch.cuda.is_available():
+            mem = torch.cuda.memory_allocated() / 1024**3
+            ok(f"GPU memory used after T5 load: {mem:.2f} GB")
 
-            t0 = time.time()
-            inputs = tokenizer(t5_input, return_tensors="pt", max_length=512, truncation=True)
+        # Test SQL generation with Spider format
+        test_input = SPIDER_SCHEMA + "show all expenses for fuel"
+        info(f"T5 input (Spider format): {test_input[:100]}...")
 
-            with torch.no_grad():
-                outputs = model.generate(
-                    inputs.input_ids,
-                    max_length=256,
-                    num_beams=4,
-                    early_stopping=True
-                )
+        t0 = time.time()
+        inputs = tokenizer(test_input, return_tensors="pt", max_length=512, truncation=True)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            sql = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            elapsed = time.time() - t0
+        with torch.no_grad():
+            outputs = model.generate(
+                inputs["input_ids"],
+                max_length=512,
+                num_beams=4,
+                early_stopping=True
+            )
 
-            ok(f"SQL generated in {elapsed:.1f}s")
-            ok(f"Generated SQL: {sql}")
+        sql = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        elapsed = time.time() - t0
 
-            # Check if it looks like valid SQL
-            if "SELECT" in sql.upper() or "select" in sql.lower():
-                ok("SQL contains SELECT — looks valid")
-            else:
-                fail(f"SQL doesn't look right: {sql}")
-                info("T5 may need fine-tuning on our schema")
+        ok(f"SQL generated in {elapsed:.1f}s")
+        ok(f"Generated SQL: {sql}")
 
-            return model, tokenizer, sql
+        # Check if it looks like valid SQL
+        if "SELECT" in sql.upper() or "select" in sql.lower():
+            ok("SQL contains SELECT — looks valid")
         else:
-            info("Skipping SQL generation (no intent from Stage 1)")
-            # Test with a hardcoded intent anyway
-            test_intent = {
-                "intent": "find_in_file",
-                "slots": {"file_name": "project alpha", "category": "fuel"},
-                "needs_clarification": False
-            }
-            info(f"Using test intent: {test_intent}")
-            intent_text = json.dumps(test_intent)
-            t5_input = f"translate intent to SQL: {intent_text}"
+            fail(f"SQL doesn't look right: {sql}")
+            info("T5 may need fine-tuning on our schema")
 
-            inputs = tokenizer(t5_input, return_tensors="pt", max_length=512, truncation=True)
-            with torch.no_grad():
-                outputs = model.generate(inputs.input_ids, max_length=256, num_beams=4, early_stopping=True)
-            sql = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            ok(f"T5 test SQL: {sql}")
-            return model, tokenizer, sql
+        return model, tokenizer, sql
 
     except Exception as e:
         fail(f"T5 failed: {e}")

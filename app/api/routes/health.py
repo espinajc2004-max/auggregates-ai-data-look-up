@@ -17,6 +17,6 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        model_path=os.getenv("MODEL_PATH", "ml/models/t5-base-temp"),
+        model_path=os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider"),
         supabase_connected=bool(os.getenv("SUPABASE_URL"))
     )

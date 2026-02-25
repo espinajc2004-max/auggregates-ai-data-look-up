@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\main.py
+# hypothesis_version: 6.151.4
+
+[1.0, '*', '/api', '0.0.0.0', '2.0.0', '7860', '=', 'API_HOST', 'API_PORT', 'AU-Ggregates AI API', 'CORS_ALLOW_ALL', 'ENVIRONMENT', 'FRONTEND_URL', 'Health', 'SENTRY_DSN', '__main__', 'app.main:app', 'app_config_module', 'config.py', 'development', 'false', 'shutdown', 'startup', 'true']

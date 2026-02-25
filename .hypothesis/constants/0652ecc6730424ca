@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\services\query_engine.py
+# hypothesis_version: 6.151.4
+
+[0.0, 1000, ',', ', ', '10', '1000', '20', '200', '50', '500', 'Amount', 'Category', 'Comparison result:\n', 'Date', 'Expenses', 'Inflow', 'Outflow', 'Total', 'ai_documents', 'ambiguous', 'amount', 'category', 'compare', 'count', 'created_at', 'data', 'date', 'date_filter', 'document_type', 'elapsed_ms', 'end', 'eq.file', 'eq.row', 'error', 'exact', 'expenses', 'file', 'file_name', 'file_name,metadata', 'file_summary', 'files', 'find_in_file', 'general_search', 'id', 'intent', 'limit', 'list_categories', 'list_files', 'message', 'metadata', 'metadata,file_name', 'metadata->>type', 'method', 'month', 'month_range', 'needs_clarification', 'overall', 'project_name', 'row_count', 'search_term', 'searchable_text', 'select', 'slots', 'source_table', 'start', 'sum', 'total', 'total_amount', 'type', 'user_date', 'value', '₱']

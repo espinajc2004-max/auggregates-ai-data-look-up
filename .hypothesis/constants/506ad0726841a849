@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\api\routes\health.py
+# hypothesis_version: 6.151.4
+
+['/health', 'SUPABASE_URL', 'T5_MODEL_PATH', 'healthy']

@@ -122,6 +122,18 @@ async def chat_hybrid(request: ChatRequest):
                     metadata={"pipeline": "mistral", "needs_clarification": True}
                 )
 
+            # Handle out-of-scope response from Mistral
+            if result.get("out_of_scope"):
+                return ChatResponse(
+                    query=request.query,
+                    message=result.get("response", "I can only help with expense and cashflow data queries."),
+                    data=[],
+                    intent="out_of_scope",
+                    confidence=1.0,
+                    session_id=session_id,
+                    metadata={"pipeline": "mistral", "out_of_scope": True}
+                )
+
             confidence = 0.95 if result.get("row_count", 0) > 0 else 0.6
 
             return ChatResponse(
