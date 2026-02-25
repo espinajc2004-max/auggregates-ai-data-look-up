@@ -272,11 +272,12 @@ class QueryEngine:
             total = 0.0
             for row in rows:
                 meta = row.get("metadata") or {}
-                for key in ["amount", "Amount", "total", "Total", "value", "Value"]:
+                # Real schema uses "Expenses" for expense amounts, "Inflow"/"Outflow" for CashFlow
+                for key in ["Expenses", "expenses", "Amount", "amount", "Inflow", "Outflow", "Total", "total"]:
                     val = meta.get(key)
                     if val is not None:
                         try:
-                            total += float(str(val).replace(",", ""))
+                            total += float(str(val).replace(",", "").replace("₱", ""))
                         except (ValueError, TypeError):
                             pass
                         break

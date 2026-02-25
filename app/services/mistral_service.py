@@ -540,8 +540,9 @@ class MistralService:
         if is_file_lookup:
             # Only return the parent file record, not individual rows
             where_parts.append("document_type = 'file'")
-        elif has_row_filter:
-            # Only return row-level data, not the file record
+        else:
+            # ALL data queries (sum, count, query_data with filters, date_filter, etc.)
+            # must filter to row-level records only — never include file records in data results
             where_parts.append("document_type = 'row'")
 
         # If no specific filters but we have entities, use searchable_text
