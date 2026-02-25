@@ -66,6 +66,10 @@ INTENT_DESCRIPTIONS = {
         "what are the files in the system",
         "enumerate all files",
         "get all files",
+        "show the cash flow file",
+        "show cashflow files",
+        "list cash flow files",
+        "show all cashflow records",
     ],
     "file_summary": [
         "show me this file",
@@ -335,10 +339,19 @@ def _extract_category(text: str) -> Optional[str]:
         from rapidfuzz import fuzz
         best_match = None
         best_score = 0
+        # Common words that should NOT be matched as categories
+        stop_words = {
+            "show", "the", "file", "files", "list", "all", "flow", "cash",
+            "display", "get", "find", "search", "what", "how", "many",
+            "total", "from", "this", "that", "with", "for", "and",
+            "expenses", "expense", "cashflow", "inflow", "outflow",
+        }
         for cat in known_categories:
             # Check each word in the query against the category
             for word in text_lower.split():
                 if len(word) < 3:
+                    continue
+                if word in stop_words:
                     continue
                 score = fuzz.ratio(word, cat.lower())
                 if score > best_score and score >= 80:
@@ -355,8 +368,13 @@ def _extract_category(text: str) -> Optional[str]:
 
 def _extract_method(text: str) -> Optional[str]:
     """Extract payment method from query."""
-    methods = ["gcash", "cash", "bank transfer", "check", "credit card", "debit"]
     text_lower = text.lower()
+    # Skip "cash" if it's part of "cash flow" / "cashflow" / "cash-flow"
+    if re.search(r'cash\s*[-]?\s*flow', text_lower):
+        # Only check non-cash methods
+        methods = ["gcash", "bank transfer", "check", "credit card", "debit"]
+    else:
+        methods = ["gcash", "cash", "bank transfer", "check", "credit card", "debit"]
     for method in methods:
         if method in text_lower:
             return method
@@ -544,6 +562,17 @@ def parse_intent(query: str) -> Dict[str, Any]:
     q = query.strip()
     q_lower = q.lower()
     slots = {}
+
+    # Pre-check: if query mentions "file(s)" + a source table keyword,
+    # route directly to list_files (avoids false positives from fuzzy matching)
+    if re.search(r'\bfiles?\b', q_lower):
+        source_table = _detect_source_table(q_lower)
+        # Check if this is a "show me X files" type query (no specific file name or category intent)
+        file_list_words = ["list", "show", "display", "get", "all", "what", "enumerate"]
+        if any(w in q_lower for w in file_list_words):
+            if source_table:
+                slots["source_table"] = source_table
+            return {"intent": "list_files", "needs_clarification": False, "slots": slots}
 
     # Step 1: Classify intent semantically
     intent_type, confidence = _classify_intent_semantic(q_lower)
