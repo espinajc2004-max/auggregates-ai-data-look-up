@@ -146,14 +146,20 @@ class SQLValidator:
         """Check for multiple statements or command chaining."""
         errors = []
         
-        # Parse SQL to check for multiple statements
-        parsed = sqlparse.parse(sql)
+        # Strip trailing semicolons and whitespace before parsing
+        # sqlparse.parse("SELECT ...;") can return 2 objects (query + empty)
+        cleaned = sql.strip().rstrip(';').strip()
         
-        if len(parsed) > 1:
+        parsed = sqlparse.parse(cleaned)
+        # Filter out empty statements
+        real_statements = [s for s in parsed if s.get_type() is not None or str(s).strip()]
+        
+        if len(real_statements) > 1:
             errors.append("Multiple SQL statements not allowed")
         
-        # Check for semicolon followed by more SQL (command chaining)
-        if re.search(r';\s*\w+', sql):
+        # Check for semicolon followed by actual SQL keywords (command chaining)
+        # But ignore trailing semicolons with only whitespace after
+        if re.search(r';\s*(?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b', sql, re.IGNORECASE):
             errors.append("Command chaining detected")
         
         return errors

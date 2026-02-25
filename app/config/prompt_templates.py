@@ -45,14 +45,19 @@ COLUMNS:
   metadata        JSONB   -- dynamic column values as key-value pairs
 
 METADATA KEYS (vary per file, set by user-defined columns):
-  Expenses:  Category, Amount, Date, Description, Supplier, Method, Remarks
+  Expenses:  Category, Expenses, Date, Description, Supplier, Method, Remarks, Name
   CashFlow:  Inflow, Outflow, Balance, Date, Remarks, Description
+
+IMPORTANT: The amount column for Expenses is called 'Expenses' (NOT 'Amount').
+  - Use metadata->>'Expenses' to get expense amounts
+  - Use metadata->>'Category' to filter by category (fuel, food, labor, etc.)
+  - Use metadata->>'Name' to get the name/description
 
 ACCESS PATTERN:
   - Use metadata->>'ColumnName' to access specific values
   - Use ILIKE for case-insensitive text matching
   - ALWAYS filter by source_table ('Expenses' or 'CashFlow')
-  - Cast to numeric for math: (metadata->>'Amount')::numeric
+  - Cast to numeric for math: (metadata->>'Expenses')::numeric
 """
 
 # ============================================================
@@ -62,7 +67,7 @@ EXAMPLE_QUERIES = """
 EXAMPLE QUERIES (use these patterns):
 
 1. All expenses for a project:
-   User: "pakita expenses sa project alpha"
+   User: "show expenses for project alpha"
    SQL: SELECT * FROM ai_documents WHERE source_table = 'Expenses' AND project_name ILIKE '%alpha%';
 
 2. Fuel expenses:
@@ -70,27 +75,27 @@ EXAMPLE QUERIES (use these patterns):
    SQL: SELECT * FROM ai_documents WHERE source_table = 'Expenses' AND metadata->>'Category' ILIKE '%fuel%';
 
 3. Total expenses for a file:
-   User: "total ng expenses sa january file"
-   SQL: SELECT SUM((metadata->>'Amount')::numeric) as total FROM ai_documents WHERE source_table = 'Expenses' AND file_name ILIKE '%january%';
+   User: "total expenses in january file"
+   SQL: SELECT SUM((metadata->>'Expenses')::numeric) as total FROM ai_documents WHERE source_table = 'Expenses' AND file_name ILIKE '%january%';
 
 4. CashFlow for a project:
-   User: "cashflow ng project bravo"
+   User: "cashflow for project bravo"
    SQL: SELECT * FROM ai_documents WHERE source_table = 'CashFlow' AND project_name ILIKE '%bravo%';
 
 5. Search by text:
-   User: "hanapin cement"
+   User: "find cement"
    SQL: SELECT * FROM ai_documents WHERE searchable_text ILIKE '%cement%';
 
 6. Count expenses by category:
-   User: "ilan ang labor expenses"
+   User: "how many labor expenses"
    SQL: SELECT COUNT(*) FROM ai_documents WHERE source_table = 'Expenses' AND metadata->>'Category' ILIKE '%labor%';
 
 7. Expenses over a certain amount:
-   User: "expenses na more than 5000"
-   SQL: SELECT * FROM ai_documents WHERE source_table = 'Expenses' AND (metadata->>'Amount')::numeric > 5000;
+   User: "expenses more than 5000"
+   SQL: SELECT * FROM ai_documents WHERE source_table = 'Expenses' AND (metadata->>'Expenses')::numeric > 5000;
 
 8. List all files:
-   User: "ano ang mga expense files"
+   User: "what are the expense files"
    SQL: SELECT DISTINCT file_name, project_name FROM ai_documents WHERE source_table = 'Expenses' ORDER BY file_name;
 """
 

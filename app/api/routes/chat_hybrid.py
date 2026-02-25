@@ -104,7 +104,7 @@ async def chat_hybrid(request: ChatRequest):
             if result.get("needs_clarification"):
                 return ChatResponse(
                     query=request.query,
-                    message=result.get("response", "Pwede mo bang i-clarify ang tanong mo?"),
+                    message=result.get("response", "Could you please clarify your question?"),
                     data=[],
                     intent="clarification",
                     confidence=0.5,
@@ -141,7 +141,7 @@ async def chat_hybrid(request: ChatRequest):
         logger.error(f"[HYBRID] Error: {str(e)}", exc_info=True)
         return ChatResponse(
             query=request.query,
-            message=f"Sorry, may error: {str(e)}",
+            message=f"Sorry, an error occurred: {str(e)}",
             data=[],
             intent="error",
             confidence=0.0,
@@ -157,7 +157,7 @@ async def _rule_based_fallback(request: ChatRequest, session_id: Optional[str]) 
     if intent.get("needs_clarification") and intent["intent"] not in ("ambiguous",):
         return ChatResponse(
             query=request.query,
-            message=intent.get("clarification_question", "Pwede mo bang i-clarify ang tanong mo?"),
+            message=intent.get("clarification_question", "Could you please clarify your question?"),
             data=[],
             intent="clarification",
             confidence=0.5,
