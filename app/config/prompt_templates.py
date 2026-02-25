@@ -100,6 +100,61 @@ EXAMPLE QUERIES (use these patterns):
 """
 
 # ============================================================
+# JSON INTENT EXAMPLES — teaches Mistral the exact output format
+# These match the exact fields used by _build_direct_sql() and QueryEngine
+# ============================================================
+JSON_INTENT_EXAMPLES = """
+INTENT EXTRACTION EXAMPLES (return JSON exactly like these):
+
+1. List all expense files:
+   Input: "show all expense files"
+   Output: {"intent_type": "list_files", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false}
+
+2. List all cash flow files:
+   Input: "show the cash flow file"
+   Output: {"intent_type": "list_files", "source_table": "CashFlow", "entities": [], "filters": {}, "needs_clarification": false}
+
+3. List all files (no filter):
+   Input: "show all files"
+   Output: {"intent_type": "list_files", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false}
+
+4. Total fuel expenses:
+   Input: "total fuel cost"
+   Output: {"intent_type": "sum", "source_table": "Expenses", "entities": ["fuel"], "filters": {"category": "fuel"}, "needs_clarification": false}
+
+5. Total expenses for a specific file:
+   Input: "total expenses in francis gays file"
+   Output: {"intent_type": "sum", "source_table": "Expenses", "entities": ["francis gays"], "filters": {"file_name": "francis gays"}, "needs_clarification": false}
+
+6. Show data inside a file:
+   Input: "show fuel expenses in francis gays"
+   Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": ["fuel", "francis gays"], "filters": {"category": "fuel", "file_name": "francis gays"}, "needs_clarification": false}
+
+7. Count expenses:
+   Input: "how many expenses in january"
+   Output: {"intent_type": "count", "source_table": "Expenses", "entities": ["january"], "filters": {"date": "january"}, "needs_clarification": false}
+
+8. Filter by project:
+   Input: "show expenses for Natours-official project"
+   Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": ["Natours-official"], "filters": {"project_name": "Natours-official"}, "needs_clarification": false}
+
+9. Filter by category and project:
+   Input: "show labor expenses for project TEST"
+   Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": ["labor", "TEST"], "filters": {"category": "labor", "project_name": "TEST"}, "needs_clarification": false}
+
+10. Compare categories:
+    Input: "compare fuel vs labor expenses"
+    Output: {"intent_type": "compare", "source_table": "Expenses", "entities": ["fuel", "labor"], "filters": {}, "needs_clarification": false}
+
+IMPORTANT RULES:
+- Always return ONLY a valid JSON object. No explanation, no extra text.
+- intent_type must be one of: list_files, query_data, sum, count, average, compare, list_categories, date_filter
+- source_table must be "Expenses" or "CashFlow" — default to "Expenses" if unclear
+- filters keys: file_name, project_name, category, date, supplier, metadata_key, metadata_value
+- needs_clarification: true only if the query is genuinely ambiguous (missing required info)
+"""
+
+# ============================================================
 # SAFETY RULES
 # ============================================================
 SAFETY_RULES = """

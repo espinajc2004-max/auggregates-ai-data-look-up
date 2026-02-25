@@ -22,7 +22,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from app.config.mistral_config import MistralConfig
-from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES
+from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES, JSON_INTENT_EXAMPLES
 from app.services.mistral_context_manager import MistralContextManager
 from app.services.sql_validator import SQLValidator
 from app.services.supabase_client import get_supabase_client
@@ -371,29 +371,21 @@ class MistralService:
         system_msg = (
             "You are an AI assistant for a construction company expense management system. "
             "Extract structured intent from user queries. "
-            "Return ONLY a valid JSON object, no explanation.\n\n"
+            "Return ONLY a valid JSON object, no explanation, no extra text.\n\n"
             f"DATABASE SCHEMA:\n{SCHEMA_CONTEXT}\n\n"
+            f"{JSON_INTENT_EXAMPLES}\n\n"
             f"{SAFETY_RULES}"
         )
         user_msg = (
-            f"Extract intent from: \"{query}\"\n\n"
-            "Return JSON with these fields:\n"
-            "- intent_type: one of [query_data, list_files, sum, count, average, min, max, compare, list_categories, date_filter, clarification_needed]\n"
-            "  Use 'list_files' for listing all files/records (e.g., 'show all expenses files', 'list my files')\n"
-            "  Use 'sum' for total/sum queries (e.g., 'total expenses', 'how much total')\n"
-            "  Use 'count' for counting queries (e.g., 'how many', 'count of')\n"
-            "  Use 'average' for average queries (e.g., 'average expense', 'mean cost')\n"
-            "  Use 'compare' for comparison queries (e.g., 'fuel vs labor', 'compare categories')\n"
-            "  Use 'query_data' for listing/showing data\n"
-            "- source_table: 'Expenses' or 'CashFlow' (based on query context)\n"
-            "- entities: list of mentioned items (file names, project names, categories like fuel/food/labor)\n"
-            "- filters: dict with optional keys: source_table, category, file_name, date, project_name, metadata_key, metadata_value\n"
-            "- needs_clarification: true/false\n"
+            f"Extract intent from this query: \"{query}\"\n\n"
+            "Return a JSON object with these exact fields:\n"
+            "- intent_type: list_files | query_data | sum | count | average | compare | list_categories | date_filter\n"
+            "- source_table: 'Expenses' or 'CashFlow' (default 'Expenses' if unclear)\n"
+            "- entities: list of key terms mentioned (file names, categories, project names)\n"
+            "- filters: dict with any of: file_name, project_name, category, date, supplier\n"
+            "- needs_clarification: true or false\n"
             "- clarification_question: string (only if needs_clarification is true)\n\n"
-            "Example: {\"intent_type\": \"query_data\", \"source_table\": \"Expenses\", "
-            "\"entities\": [\"fuel\"], "
-            "\"filters\": {\"source_table\": \"Expenses\", \"metadata_key\": \"Category\", \"metadata_value\": \"fuel\", \"project_name\": \"project alpha\"}, "
-            "\"needs_clarification\": false}"
+            "Return ONLY the JSON object. No explanation."
         )
 
         prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
