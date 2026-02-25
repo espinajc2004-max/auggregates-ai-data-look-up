@@ -253,17 +253,16 @@ class MistralService:
             try:
                 # T5 receives structured query from Mistral (not raw user input)
                 logger.info("Stage 2: T5 SQL generation from Mistral's structured intent")
-                sql = await self._generate_sql_with_t5(query, intent)
-                logger.info(f"Stage 2 T5 generated SQL: {sql}")
-                sql_source = "t5"
+                sql, sql_source = await self._generate_sql_with_t5(query, intent)
+                logger.info(f"Stage 2 generated SQL (source={sql_source}): {sql}")
                 
                 # Validate T5 SQL
                 validation_result = self.sql_validator.validate(sql, role="user")
                 if not validation_result.is_valid:
-                    logger.warning(f"Stage 2 T5 SQL REJECTED by validator: {validation_result.errors}")
-                    raise ValidationError(f"T5 SQL invalid: {', '.join(validation_result.errors or ['Invalid SQL'])}")
+                    logger.warning(f"Stage 2 SQL REJECTED by validator (source={sql_source}): {validation_result.errors}")
+                    raise ValidationError(f"SQL invalid: {', '.join(validation_result.errors or ['Invalid SQL'])}")
                 
-                logger.info("Stage 2 T5 SQL passed validation, executing...")
+                logger.info(f"Stage 2 SQL passed validation (source={sql_source}), executing...")
 
                 # Execute via Supabase RPC
                 supabase = get_supabase_client()
@@ -271,7 +270,7 @@ class MistralService:
                 result = supabase.rpc("execute_sql", {"query": sql})
                 execution_time = (time.time() - exec_start) * 1000
                 data = result if isinstance(result, list) else []
-                logger.info(f"T5 SQL executed in {execution_time:.0f}ms | rows: {len(data)}")
+                logger.info(f"SQL executed in {execution_time:.0f}ms (source={sql_source}) | rows: {len(data)}")
 
             except (ValidationError, GenerationError, Exception) as t5_err:
                 # T5 failed — fall back to rule-based
@@ -438,35 +437,28 @@ class MistralService:
             "clarification_question": rule.get("clarification_question", "")
         }
     
-    async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> str:
+    async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> tuple:
         """
         STAGE 2: Generate SQL from Mistral's structured intent.
         
         Strategy: Build SQL directly from intent (reliable) → fall back to T5 if needed.
         
-        Mistral (Stage 1) already extracted: intent_type, source_table, filters, entities.
-        We have enough info to build correct SQL without T5 for most queries.
-        T5 is only used as fallback for edge cases.
-        
-        Args:
-            query: Original natural language query from user
-            intent: Structured intent from Stage 1 (Mistral's understanding)
-            
         Returns:
-            Generated SQL query (JSONB-compatible for ai_documents)
+            Tuple of (sql_string, source_label) where source is "direct" or "t5"
         """
         # Try direct SQL builder first (reliable, uses Mistral's structured intent)
         try:
             sql = self._build_direct_sql(intent)
             if sql:
                 logger.info(f"Stage 2: Direct SQL from intent: {sql}")
-                return sql
+                return (sql, "direct")
         except Exception as e:
             logger.warning(f"Stage 2: Direct SQL builder failed: {e}")
         
         # Fallback: use T5 model
         logger.info("Stage 2: Falling back to T5 model for SQL generation")
-        return await self._generate_sql_with_t5_model(query, intent)
+        sql = await self._generate_sql_with_t5_model(query, intent)
+        return (sql, "t5")
     
     def _build_direct_sql(self, intent: Dict[str, Any]) -> Optional[str]:
         """
