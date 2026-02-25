@@ -298,10 +298,11 @@ def _extract_single_file(text: str) -> Optional[str]:
         "gcash", "cash", "total", "count", "sum", "compare", "list",
         "how", "many", "much", "what", "are", "is", "of", "for", "from",
         "help", "please", "pls", "po", "naman", "lang", "ba", "dito",
+        "file", "files", "data", "record", "records", "entry", "entries",
     ]
     
     words = text.split()
-    filtered = [w for w in words if w not in stop_words and len(w) > 2]
+    filtered = [w for w in words if w not in stop_words and len(w) >= 2]
     
     # Look for multi-word file names (2-3 word combos)
     for i in range(len(filtered) - 1):
