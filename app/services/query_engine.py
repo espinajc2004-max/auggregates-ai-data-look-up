@@ -43,6 +43,8 @@ class QueryEngine:
         try:
             if intent_type == "file_summary":
                 result = self._file_summary(slots)
+            elif intent_type == "list_files":
+                result = self._list_files(slots)
             elif intent_type == "find_in_file":
                 result = self._find_in_file(slots)
             elif intent_type == "list_categories":
@@ -126,6 +128,28 @@ class QueryEngine:
         return {
             "data": rows,
             "message": f"Found {len(rows)} expense file(s) matching '{file_name}'.",
+            "row_count": len(rows)
+        }
+
+    def _list_files(self, slots: Dict) -> Dict:
+        """List all parent file records (document_type = 'file')."""
+        params = {
+            "document_type": "eq.file",
+            "select": "id,file_name,project_name,source_table,searchable_text,metadata",
+            "limit": "50"
+        }
+        rows = self._fetch(params)
+
+        if not rows:
+            return {
+                "data": [],
+                "message": "No expense files found in the system.",
+                "row_count": 0
+            }
+
+        return {
+            "data": rows,
+            "message": f"Found {len(rows)} expense file(s) in the system.",
             "row_count": len(rows)
         }
 

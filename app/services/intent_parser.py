@@ -128,6 +128,18 @@ def parse_intent(query: str) -> Dict[str, Any]:
         return {"intent": "list_categories", "needs_clarification": False, "slots": slots}
 
     # ----------------------------------------------------------------
+    # 4b. LIST FILES intent — "show all files", "list expenses files"
+    # ----------------------------------------------------------------
+    list_files_patterns = [
+        r"(list|show|display|get)\b.*\b(all|my)?\s*(files|records|documents)",
+        r"(all|lahat)\b.*\b(files|records|documents)",
+        r"\b(files|records|documents)\s*(list|all|lahat)",
+        r"(list|show)\b.*\b(expenses?|cashflow)\s*(files|records)",
+    ]
+    if any(re.search(p, q_lower) for p in list_files_patterns):
+        return {"intent": "list_files", "needs_clarification": False, "slots": slots}
+
+    # ----------------------------------------------------------------
     # 5. DATE FILTER intent
     # ----------------------------------------------------------------
     date_slot = _extract_date(q_lower)
@@ -282,40 +294,69 @@ def _extract_method(text: str) -> Optional[str]:
 
 def _extract_single_file(text: str) -> Optional[str]:
     """
-    Extract a single file name from query.
-    Uses known file names from ai_documents + fuzzy partial matching.
+    Extract a single file name from query by matching against actual
+    file names in the database. Fully dynamic — no hardcoded patterns.
     """
-    # Common patterns: "in <file>", "sa <file>", "of <file>", "ng <file>"
-    # We do a broad match — the query engine will do ILIKE fuzzy matching
+    # Get known file names from database (cached)
+    known_files = _get_known_file_names()
     
-    # Remove common verbs/prepositions to isolate the file name
-    stop_words = [
-        "show", "me", "the", "find", "get", "display", "open", "view",
-        "ipakita", "pakita", "hanapin", "hanap", "buksan", "tingnan",
-        "in", "sa", "ng", "yong", "yung", "ang", "mo", "ko", "na",
-        "all", "lahat", "category", "kategorya", "expenses", "cashflow",
-        "fuel", "food", "car", "labor", "cement", "steel", "sand", "gravel",
-        "gcash", "cash", "total", "count", "sum", "compare", "list",
-        "how", "many", "much", "what", "are", "is", "of", "for", "from",
-        "help", "please", "pls", "po", "naman", "lang", "ba", "dito",
-        "file", "files", "data", "record", "records", "entry", "entries",
-    ]
+    if not known_files:
+        return None
     
-    words = text.split()
-    filtered = [w for w in words if w not in stop_words and len(w) >= 2]
+    text_lower = text.lower()
     
-    # Look for multi-word file names (2-3 word combos)
-    for i in range(len(filtered) - 1):
-        candidate = f"{filtered[i]} {filtered[i+1]}"
-        if _looks_like_file_name(candidate):
-            return candidate
+    # Sort by length descending so longer names match first
+    # e.g., "francis gays" matches before "francis"
+    sorted_files = sorted(known_files, key=len, reverse=True)
     
-    # Single word file names
-    for w in filtered:
-        if _looks_like_file_name(w):
-            return w
+    for file_name in sorted_files:
+        if file_name.lower() in text_lower:
+            return file_name
     
     return None
+
+
+# Cache for known file names
+_file_name_cache: Optional[List[str]] = None
+_file_name_cache_time: float = 0
+_FILE_NAME_CACHE_TTL: float = 300  # 5 minutes
+
+
+def _get_known_file_names() -> List[str]:
+    """
+    Fetch all distinct file_name values from ai_documents.
+    Cached for 5 minutes to avoid hitting DB on every query.
+    """
+    import time as _time
+    global _file_name_cache, _file_name_cache_time
+    
+    now = _time.time()
+    if _file_name_cache is not None and (now - _file_name_cache_time) < _FILE_NAME_CACHE_TTL:
+        return _file_name_cache
+    
+    try:
+        from app.services.supabase_client import get_supabase_client
+        client = get_supabase_client()
+        rows = client.get("ai_documents", {
+            "select": "file_name",
+            "document_type": "eq.file",
+            "limit": "500"
+        })
+        
+        if rows:
+            _file_name_cache = list(set(r["file_name"] for r in rows if r.get("file_name")))
+        else:
+            # Fallback: get all distinct file names if no 'file' type entries
+            rows = client.get("ai_documents", {
+                "select": "file_name",
+                "limit": "500"
+            })
+            _file_name_cache = list(set(r["file_name"] for r in rows if r.get("file_name")))
+        
+        _file_name_cache_time = now
+        return _file_name_cache
+    except Exception:
+        return _file_name_cache or []
 
 
 def _extract_multiple_files(text: str) -> List[str]:

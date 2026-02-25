@@ -367,7 +367,8 @@ class MistralService:
         user_msg = (
             f"Extract intent from: \"{query}\"\n\n"
             "Return JSON with these fields:\n"
-            "- intent_type: one of [query_data, sum, count, average, min, max, compare, list_categories, date_filter, clarification_needed]\n"
+            "- intent_type: one of [query_data, list_files, sum, count, average, min, max, compare, list_categories, date_filter, clarification_needed]\n"
+            "  Use 'list_files' for listing all files/records (e.g., 'show all expenses files', 'list my files')\n"
             "  Use 'sum' for total/sum queries (e.g., 'total expenses', 'how much total')\n"
             "  Use 'count' for counting queries (e.g., 'how many', 'count of')\n"
             "  Use 'average' for average queries (e.g., 'average expense', 'mean cost')\n"
@@ -464,16 +465,18 @@ class MistralService:
         """
         Build SQL directly from Mistral's structured intent.
         No T5 needed — we construct the query from the extracted fields.
-        
+
         Returns SQL string or None if we can't build it directly.
         """
         source_table = intent.get("source_table", "Expenses")
         intent_type = intent.get("intent_type", "query_data")
         filters = intent.get("filters", {})
         entities = intent.get("entities", [])
-        
+
         # Build SELECT clause based on intent type
-        if intent_type == "sum":
+        if intent_type == "list_files":
+            select = "SELECT id, file_name, project_name, source_table, searchable_text, metadata"
+        elif intent_type == "sum":
             select = "SELECT SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count"
         elif intent_type == "count":
             select = "SELECT COUNT(*) as count"
@@ -488,72 +491,81 @@ class MistralService:
         else:
             # query_data, date_filter, etc. — return all columns
             select = "SELECT id, file_name, project_name, source_table, searchable_text, metadata"
-        
+
         # Build WHERE clause
         where_parts = [f"source_table = '{source_table}'"]
-        
+
+        # list_files: always filter to parent file records only, skip row-level filters
+        if intent_type == "list_files":
+            where_parts.append("document_type = 'file'")
+            where_clause = " AND ".join(where_parts)
+            sql = f"{select} FROM ai_documents WHERE {where_clause} LIMIT 50;"
+            logger.info(f"Direct SQL built (list_files): {sql}")
+            return sql
+
         # File name filter
         file_name = filters.get("file_name")
         if file_name:
             where_parts.append(f"file_name ILIKE '%{file_name}%'")
-        
+
         # Project name filter
         project_name = filters.get("project_name")
         if project_name:
             where_parts.append(f"project_name ILIKE '%{project_name}%'")
-        
+
         # Category filter (metadata JSONB)
         category = filters.get("category") or filters.get("metadata_value")
         if category:
             where_parts.append(f"metadata->>'Category' ILIKE '%{category}%'")
-        
+
         # Supplier filter
         supplier = filters.get("supplier")
         if supplier:
             where_parts.append(f"metadata->>'Supplier' ILIKE '%{supplier}%'")
-        
+
         # Date filter
         date_val = filters.get("date")
         if date_val:
             where_parts.append(f"metadata->>'Date' ILIKE '%{date_val}%'")
-        
+
         # Determine if this is a "file lookup" vs "data query"
         # File lookup: user wants the parent file record (e.g., "show me francis gays file")
         # Data query: user wants rows inside a file (e.g., "show fuel expenses in francis gays")
         has_row_filter = any(filters.get(k) for k in ["category", "metadata_value", "supplier", "date"])
         is_file_lookup = file_name and not has_row_filter and intent_type == "query_data"
-        
+
         if is_file_lookup:
             # Only return the parent file record, not individual rows
             where_parts.append("document_type = 'file'")
         elif has_row_filter:
             # Only return row-level data, not the file record
             where_parts.append("document_type = 'row'")
-        
+
         # If no specific filters but we have entities, use searchable_text
         has_specific_filter = any(filters.get(k) for k in ["file_name", "project_name", "category", "metadata_value", "supplier", "date"])
         if not has_specific_filter and entities:
             for entity in entities:
                 if entity and isinstance(entity, str):
                     where_parts.append(f"searchable_text ILIKE '%{entity}%'")
-        
+
         where_clause = " AND ".join(where_parts)
-        
+
         # Build full SQL
         sql = f"{select} FROM ai_documents WHERE {where_clause}"
-        
+
         # Add GROUP BY for compare
         if intent_type == "compare":
             sql = f"SELECT metadata->>'Category' as category, SUM((metadata->>'Expenses')::numeric) as total, COUNT(*) as count FROM ai_documents WHERE {where_clause} GROUP BY metadata->>'Category'"
-        
+
         # Add LIMIT for data queries
         if intent_type in ("query_data", "date_filter"):
             sql += " LIMIT 50"
-        
+
         sql += ";"
-        
+
         logger.info(f"Direct SQL built: {sql}")
         return sql
+
     
     async def _generate_sql_with_t5_model(self, query: str, intent: Dict[str, Any]) -> str:
         """
