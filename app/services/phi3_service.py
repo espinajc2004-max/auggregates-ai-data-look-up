@@ -157,30 +157,59 @@ class Phi3Service:
                 logger.warning("CUDA not available, using CPU")
                 self.config.device = "cpu"
             
+            logger.info(f"CUDA available: {cuda_available}")
+            
             # Load tokenizer
             self.phi3_tokenizer = AutoTokenizer.from_pretrained(
                 self.config.model_name,
                 trust_remote_code=True
             )
             
-            # Load Phi-3 model with 4-bit quantization to reduce memory usage
+            # Load Phi-3 model with quantization to reduce memory usage
             load_kwargs = {
                 "device_map": self.config.device_map,
                 "trust_remote_code": True,
             }
-            if self.config.quantization == "4bit":
+            
+            # Quantization requires CUDA — fall back to float16 on CPU
+            quant = self.config.quantization if cuda_available else "none"
+            if not cuda_available and self.config.quantization in ("4bit", "8bit"):
+                logger.warning(
+                    f"Quantization '{self.config.quantization}' requires CUDA but no GPU found. "
+                    "Falling back to float16."
+                )
+            
+            if quant == "4bit":
                 from transformers import BitsAndBytesConfig
-                load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-            elif self.config.quantization == "8bit":
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            elif quant == "8bit":
                 from transformers import BitsAndBytesConfig
                 load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
             else:
-                load_kwargs["torch_dtype"] = torch.float32
+                load_kwargs["torch_dtype"] = torch.float16 if cuda_available else torch.float32
             
-            self.phi3_model = AutoModelForCausalLM.from_pretrained(
-                self.config.model_name,
-                **load_kwargs
-            )
+            try:
+                self.phi3_model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_name,
+                    **load_kwargs
+                )
+            except (KeyError, TypeError, ValueError) as quant_err:
+                # BitsAndBytesConfig version mismatch — retry without quantization
+                logger.warning(
+                    f"Quantized load failed ({type(quant_err).__name__}: {quant_err}). "
+                    "Retrying with float16 (no quantization)..."
+                )
+                load_kwargs.pop("quantization_config", None)
+                load_kwargs["torch_dtype"] = torch.float16
+                self.phi3_model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_name,
+                    **load_kwargs
+                )
             
             self._phi3_loaded = True
             logger.info("Phi-3 model loaded successfully")
