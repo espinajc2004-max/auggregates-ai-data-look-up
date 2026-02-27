@@ -697,8 +697,11 @@ class MistralService:
                     pos = insert_match.start()
                     result = result[:pos] + f" WHERE source_table = '{source_table}'" + result[pos:]
                 else:
-                    result = result.rstrip(';') + f" WHERE source_table = '{source_table}';"
+                    result = result.rstrip(';') + f" WHERE source_table = '{source_table}'"
         # When source_table is None, do NOT inject any source_table filter (cross-table search)
+
+        # Final safety: strip any trailing semicolons — Supabase RPC rejects them
+        result = result.strip().rstrip(";").strip()
 
         return result
 
