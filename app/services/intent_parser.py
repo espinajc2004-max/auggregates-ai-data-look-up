@@ -17,6 +17,7 @@ import numpy as np
 from typing import Dict, Any, Optional, List
 from datetime import datetime, date
 from app.utils.logger import get_logger
+from app.services.schema_registry import get_schema_registry
 
 logger = get_logger(__name__)
 
@@ -452,24 +453,25 @@ def _extract_multiple_files(text: str) -> List[str]:
 
 def _detect_source_table(text: str) -> Optional[str]:
     """
-    Detect source_table from query context.
-    Returns 'Expenses' if user mentions expenses, 'CashFlow' if cashflow.
-    Returns None if ambiguous (return all).
+    Detect source_table from query context using SchemaRegistry keyword mapping.
+    Returns the matched source_table, or None for ambiguous/unmatched queries.
+    Falls back to hardcoded keywords if SchemaRegistry is unavailable.
     """
-    text_lower = text.lower()
-    # Match "cash flow", "cashflow", "cash-flow" as a phrase first
-    cashflow_words = ["cashflow", "cash flow", "cash-flow", "inflow", "outflow"]
-    expense_words = ["expense", "expenses", "gastos", "cost", "costs", "spending"]
-
-    has_cashflow = any(w in text_lower for w in cashflow_words)
-    has_expense = any(w in text_lower for w in expense_words)
-
-    if has_cashflow and not has_expense:
-        return "CashFlow"
-    if has_expense and not has_cashflow:
-        return "Expenses"
-    # If both or neither mentioned, return None (show all)
-    return None
+    try:
+        registry = get_schema_registry()
+        return registry.detect_source_table(text)
+    except Exception:
+        # Fallback to hardcoded keyword lists
+        text_lower = text.lower()
+        cashflow_words = ["cashflow", "cash flow", "cash-flow", "inflow", "outflow"]
+        expense_words = ["expense", "expenses", "gastos", "cost", "costs", "spending"]
+        has_cashflow = any(w in text_lower for w in cashflow_words)
+        has_expense = any(w in text_lower for w in expense_words)
+        if has_cashflow and not has_expense:
+            return "CashFlow"
+        if has_expense and not has_cashflow:
+            return "Expenses"
+        return None
 
 
 def _extract_search_term(text: str) -> Optional[str]:

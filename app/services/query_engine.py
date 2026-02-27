@@ -10,6 +10,7 @@ import re
 import time
 from typing import Dict, Any, List, Optional
 from app.services.supabase_client import get_supabase_client
+from app.services.schema_registry import get_schema_registry
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,6 +26,7 @@ class QueryEngine:
 
     def __init__(self):
         self.supabase = get_supabase_client()
+        self.schema_registry = get_schema_registry()
 
     def execute(self, intent: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -127,7 +129,7 @@ class QueryEngine:
 
         return {
             "data": rows,
-            "message": f"Found {len(rows)} expense file(s) matching '{file_name}'.",
+            "message": f"Found {len(rows)} file(s) matching '{file_name}'.",
             "row_count": len(rows)
         }
 
@@ -169,6 +171,7 @@ class QueryEngine:
         file_name = slots.get("file_name", "")
         category = slots.get("category", "")
         method = slots.get("method", "")
+        source_table = slots.get("source_table", "")
 
         params = {
             "document_type": "eq.row",
@@ -184,6 +187,8 @@ class QueryEngine:
             params["file_name"] = f"ilike.*{file_name}*"
         if search_text:
             params["searchable_text"] = f"ilike.*{search_text}*"
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
 
         rows = self._fetch(params)
 
@@ -203,6 +208,7 @@ class QueryEngine:
     def _list_categories(self, slots: Dict) -> Dict:
         """List distinct categories from metadata."""
         file_name = slots.get("file_name", "")
+        source_table = slots.get("source_table", "")
 
         params = {
             "document_type": "eq.row",
@@ -211,17 +217,22 @@ class QueryEngine:
         }
         if file_name:
             params["file_name"] = f"ilike.*{file_name}*"
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
 
         rows = self._fetch(params)
 
         # Extract unique categories from metadata
+        # Try multiple category-like keys across all source tables
+        category_keys = ["Category", "category", "Type", "type", "status", "Status"]
         categories = set()
         for row in rows:
             meta = row.get("metadata") or {}
-            # Real schema uses "Category" key
-            cat = meta.get("Category") or meta.get("category") or meta.get("type")
-            if cat:
-                categories.add(str(cat).strip())
+            for key in category_keys:
+                cat = meta.get(key)
+                if cat:
+                    categories.add(str(cat).strip())
+                    break
 
         if not categories:
             # Fallback: extract from searchable_text
@@ -248,6 +259,7 @@ class QueryEngine:
         """Compare two files by count and total amount."""
         files = slots.get("files", [])
         category = slots.get("category", "")
+        source_table = slots.get("source_table", "")
 
         if len(files) < 2:
             return {
@@ -256,6 +268,15 @@ class QueryEngine:
                 "row_count": 0,
                 "needs_clarification": True
             }
+
+        # Build numeric key lookup list from SchemaRegistry
+        numeric_keys = self.schema_registry.get_numeric_keys()
+        # Also include common case variants
+        amount_keys = []
+        for nk in numeric_keys:
+            amount_keys.append(nk)
+            if nk != nk.lower():
+                amount_keys.append(nk.lower())
 
         results = []
         for fname in files:
@@ -267,13 +288,14 @@ class QueryEngine:
             }
             if category:
                 params["searchable_text"] = f"ilike.*{category}*"
+            if source_table:
+                params["source_table"] = f"eq.{source_table}"
 
             rows = self._fetch(params)
             total = 0.0
             for row in rows:
                 meta = row.get("metadata") or {}
-                # Real schema uses "Expenses" for expense amounts, "Inflow"/"Outflow" for CashFlow
-                for key in ["Expenses", "expenses", "Amount", "amount", "Inflow", "Outflow", "Total", "total"]:
+                for key in amount_keys:
                     val = meta.get(key)
                     if val is not None:
                         try:
@@ -300,6 +322,7 @@ class QueryEngine:
         file_name = slots.get("file_name", "")
         category = slots.get("category", "")
         date_slot = slots.get("date")
+        source_table = slots.get("source_table", "")
 
         params = {
             "document_type": "eq.row",
@@ -310,6 +333,8 @@ class QueryEngine:
             params["file_name"] = f"ilike.*{file_name}*"
         if category:
             params["searchable_text"] = f"ilike.*{category}*"
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
 
         rows = self._fetch(params)
 
@@ -338,6 +363,7 @@ class QueryEngine:
         file_name = slots.get("file_name", "")
         category = slots.get("category", "")
         date_slot = slots.get("date")
+        source_table = slots.get("source_table", "")
 
         params = {
             "document_type": "eq.row",
@@ -348,17 +374,38 @@ class QueryEngine:
             params["file_name"] = f"ilike.*{file_name}*"
         if category:
             params["searchable_text"] = f"ilike.*{category}*"
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
 
         rows = self._fetch(params)
 
         if date_slot:
             rows = self._apply_date_filter(rows, date_slot)
 
+        # Build numeric key lookup from SchemaRegistry
+        numeric_keys = self.schema_registry.get_numeric_keys()
+        if source_table:
+            # When source_table is known, try only that table's numeric keys
+            table_keys = set(self.schema_registry.get_metadata_keys(source_table))
+            amount_keys = [k for k in numeric_keys if k in table_keys]
+            # Also add lowercase variants
+            amount_keys_lookup = []
+            for k in amount_keys:
+                amount_keys_lookup.append(k)
+                if k != k.lower():
+                    amount_keys_lookup.append(k.lower())
+        else:
+            # Cross-table: try all numeric keys
+            amount_keys_lookup = []
+            for k in numeric_keys:
+                amount_keys_lookup.append(k)
+                if k != k.lower():
+                    amount_keys_lookup.append(k.lower())
+
         total = 0.0
         for row in rows:
             meta = row.get("metadata") or {}
-            # Real schema uses "Expenses" key
-            for key in ["Expenses", "expenses", "Amount", "amount", "Total", "total"]:
+            for key in amount_keys_lookup:
                 val = meta.get(key)
                 if val is not None:
                     try:
@@ -389,6 +436,7 @@ class QueryEngine:
         file_name = slots.get("file_name", "")
         category = slots.get("category", "")
         method = slots.get("method", "")
+        source_table = slots.get("source_table", "")
 
         params = {
             "document_type": "eq.row",
@@ -397,6 +445,8 @@ class QueryEngine:
         }
         if file_name:
             params["file_name"] = f"ilike.*{file_name}*"
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
 
         search_parts = [p for p in [category, method] if p]
         if search_parts:
@@ -472,6 +522,7 @@ class QueryEngine:
     def _general_search(self, slots: Dict) -> Dict:
         """Full-text search fallback."""
         search_term = slots.get("search_term", "")
+        source_table = slots.get("source_table", "")
 
         if not search_term:
             return {
@@ -485,6 +536,8 @@ class QueryEngine:
             "searchable_text": f"ilike.*{search_term}*",
             "limit": "20"
         }
+        if source_table:
+            params["source_table"] = f"eq.{source_table}"
         rows = self._fetch(params)
 
         if not rows:

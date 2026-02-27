@@ -3,6 +3,8 @@ Prompt templates for AU-Ggregates AI system.
 Injected into Mistral prompts every request to scope the AI's behavior.
 """
 
+from app.services.schema_registry import get_schema_registry
+
 # ============================================================
 # SYSTEM IDENTITY — who the AI is, what it can do
 # ============================================================
@@ -10,10 +12,13 @@ SYSTEM_IDENTITY = """You are the AU-Ggregates AI Assistant — a smart data look
 for a Filipino construction/aggregates company.
 
 YOUR CAPABILITIES:
-- Look up Expenses and CashFlow data from the company database
+- Look up Expenses, CashFlow, Project, Quotation, and QuotationItem data from the company database
+- Query project details (names, clients, locations, statuses)
+- Query quotation data (quote numbers, totals, statuses)
+- Query delivery/line item details (plate numbers, DR numbers, materials, volumes)
 - Understand queries in English or Filipino (Taglish)
 - Summarize financial data (totals, counts, comparisons)
-- Filter by project, category, date, file name, supplier, etc.
+- Filter by project, category, date, file name, quotation, delivery, plate number, etc.
 
 YOUR LIMITATIONS:
 - You can ONLY read data (SELECT queries). No INSERT, UPDATE, DELETE.
@@ -29,15 +34,15 @@ RESPONSE STYLE:
 """
 
 # ============================================================
-# DATABASE SCHEMA — the only table the AI can query
+# DATABASE SCHEMA — static table structure (metadata keys are injected dynamically)
 # ============================================================
 SCHEMA_CONTEXT = """
 TABLE: ai_documents (the ONLY table containing company data)
 
 COLUMNS:
   id              UUID    -- unique row identifier
-  source_table    TEXT    -- data origin: "Expenses" or "CashFlow"
-  file_name       TEXT    -- name of the uploaded expense or cashflow file
+  source_table    TEXT    -- data origin: "Expenses", "CashFlow", "Project", "Quotation", or "QuotationItem"
+  file_name       TEXT    -- name of the uploaded file
   project_name    TEXT    -- project this record belongs to (e.g., "Project Alpha")
   searchable_text TEXT    -- all cell values concatenated for full-text lookup
   metadata        JSONB   -- dynamic column values stored as key-value pairs (keys depend on source_table)
@@ -45,28 +50,7 @@ COLUMNS:
 
 METADATA KEYS BY SOURCE TABLE:
   The metadata column holds different keys depending on the source_table value.
-
-  When source_table = "Expenses":
-    Category    -- expense category (e.g., fuel, food, labor, materials)
-    Expenses    -- the monetary amount of the expense (this is the amount field, NOT called "Amount")
-    Date        -- date of the expense
-    Description -- description of the expense entry
-    Supplier    -- supplier or vendor name
-    Method      -- payment method (e.g., cash, check, bank transfer)
-    Remarks     -- additional notes or remarks
-    Name        -- name or label for the expense entry
-
-  When source_table = "CashFlow":
-    Inflow      -- money received
-    Outflow     -- money spent
-    Balance     -- running balance
-    Date        -- date of the cash flow entry
-    Remarks     -- additional notes or remarks
-    Description -- description of the cash flow entry
-
-IMPORTANT NAMING NOTE:
-  For Expenses records, the amount field is called "Expenses" in metadata, NOT "Amount".
-  Always refer to the expense amount as "Expenses" when interpreting user queries about costs or totals.
+  The actual metadata keys per source table are listed below (dynamically discovered).
 """
 
 # ============================================================
@@ -81,15 +65,15 @@ Before extracting intent fields, classify every query into one of these categori
    → Set needs_clarification: true and provide a clarification_question.
    Examples: "help me find", "show me something", "I need data", "can you look up"
 
-2. OUT-OF-SCOPE QUERY — The query is unrelated to expenses, cashflow, files,
-   projects, categories, suppliers, or financial data.
+2. OUT-OF-SCOPE QUERY — The query is unrelated to expenses, cashflow, projects,
+   quotations, deliveries, files, categories, suppliers, or financial data.
    → Set intent_type: "out_of_scope" and provide an out_of_scope_message.
    Examples: "what's the weather", "tell me a joke", "who is the president"
 
 3. ACTIONABLE QUERY — The query contains enough specificity to generate SQL
-   (mentions a category, file, project, date, supplier, or clear data operation).
+   (mentions a category, file, project, date, supplier, quotation, delivery, or clear data operation).
    → Extract intent normally with needs_clarification: false.
-   Examples: "show fuel expenses", "total labor costs in January", "list all files"
+   Examples: "show fuel expenses", "total labor costs in January", "list all projects", "total quotation amount"
 
 Evaluate EVERY query against these rules BEFORE extracting intent fields.
 """
@@ -117,7 +101,7 @@ INTENT EXTRACTION EXAMPLES (return JSON exactly like these):
 
 3. List all files (no filter):
    Input: "show all files"
-   Output: {"intent_type": "list_files", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false}
+   Output: {"intent_type": "list_files", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false}
 
 4. Total fuel expenses:
    Input: "total fuel cost"
@@ -149,7 +133,7 @@ INTENT EXTRACTION EXAMPLES (return JSON exactly like these):
 
 11. List all files (diverse phrasing):
     Input: "what files do we have"
-    Output: {"intent_type": "list_files", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false}
+    Output: {"intent_type": "list_files", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false}
 
 12. Sum expenses by category (how much phrasing):
     Input: "how much did we spend on fuel"
@@ -169,7 +153,7 @@ INTENT EXTRACTION EXAMPLES (return JSON exactly like these):
 
 16. Count records (how many phrasing):
     Input: "how many entries do we have"
-    Output: {"intent_type": "count", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false}
+    Output: {"intent_type": "count", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false}
 
 17. Date filtering:
     Input: "expenses from January"
@@ -179,35 +163,64 @@ INTENT EXTRACTION EXAMPLES (return JSON exactly like these):
     Input: "find cement purchases"
     Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": ["cement"], "filters": {"category": "cement"}, "needs_clarification": false}
 
-19. Vague query (no specific target):
+19. List all projects:
+    Input: "list all projects"
+    Output: {"intent_type": "query_data", "source_table": "Project", "entities": [], "filters": {}, "needs_clarification": false}
+
+20. Query project by client:
+    Input: "show projects for client ABC Corp"
+    Output: {"intent_type": "query_data", "source_table": "Project", "entities": ["ABC Corp"], "filters": {"client_name": "ABC Corp"}, "needs_clarification": false}
+
+21. Total quotation amount:
+    Input: "total amount of all quotations"
+    Output: {"intent_type": "sum", "source_table": "Quotation", "entities": [], "filters": {}, "needs_clarification": false}
+
+22. Query quotation by status:
+    Input: "show approved quotations"
+    Output: {"intent_type": "query_data", "source_table": "Quotation", "entities": ["approved"], "filters": {"status": "approved"}, "needs_clarification": false}
+
+23. Show deliveries by plate number:
+    Input: "show deliveries for plate ABC-123"
+    Output: {"intent_type": "query_data", "source_table": "QuotationItem", "entities": ["ABC-123"], "filters": {"plate_no": "ABC-123"}, "needs_clarification": false}
+
+24. Total delivery volume:
+    Input: "total volume delivered"
+    Output: {"intent_type": "sum", "source_table": "QuotationItem", "entities": [], "filters": {}, "needs_clarification": false}
+
+25. Query deliveries by DR number:
+    Input: "show DR number 5001"
+    Output: {"intent_type": "query_data", "source_table": "QuotationItem", "entities": ["5001"], "filters": {"dr_no": "5001"}, "needs_clarification": false}
+
+26. Vague query (no specific target):
     Input: "help me find something"
-    Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "Could you specify what data you're looking for? For example, a category like fuel or labor, a specific file, or a date range?"}
+    Output: {"intent_type": "query_data", "source_table": null, "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "Could you specify what data you're looking for? For example, expenses by category, project details, quotation data, or delivery information?"}
 
-20. Vague query (generic data request):
+27. Vague query (generic data request):
     Input: "I need data"
-    Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "What kind of data do you need? I can look up expenses by category, project, supplier, date, or file name."}
+    Output: {"intent_type": "query_data", "source_table": null, "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "What kind of data do you need? I can look up expenses, cash flow, projects, quotations, or delivery details."}
 
-21. Vague query (unspecific lookup):
+28. Vague query (unspecific lookup):
     Input: "can you look up our records"
-    Output: {"intent_type": "query_data", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "Which records would you like to see? Please specify a category, project, file, or date range so I can find the right data."}
+    Output: {"intent_type": "query_data", "source_table": null, "entities": [], "filters": {}, "needs_clarification": true, "clarification_question": "Which records would you like to see? I can search expenses, cash flow, projects, quotations, or deliveries. Please specify a category, project, file, or date range."}
 
-22. Out-of-scope query (weather):
+29. Out-of-scope query (weather):
     Input: "what's the weather today"
-    Output: {"intent_type": "out_of_scope", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with expense and cashflow data queries. Try asking about expenses, files, or projects."}
+    Output: {"intent_type": "out_of_scope", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with company data queries — expenses, cash flow, projects, quotations, and deliveries. Try asking about one of those."}
 
-23. Out-of-scope query (joke):
+30. Out-of-scope query (joke):
     Input: "tell me a joke"
-    Output: {"intent_type": "out_of_scope", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with expense and cashflow data queries. Try asking about expenses, files, or projects."}
+    Output: {"intent_type": "out_of_scope", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with company data queries — expenses, cash flow, projects, quotations, and deliveries. Try asking about one of those."}
 
-24. Out-of-scope query (general knowledge):
+31. Out-of-scope query (general knowledge):
     Input: "who is the president of the Philippines"
-    Output: {"intent_type": "out_of_scope", "source_table": "Expenses", "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with expense and cashflow data queries. Try asking about expenses, files, or projects."}
+    Output: {"intent_type": "out_of_scope", "source_table": null, "entities": [], "filters": {}, "needs_clarification": false, "out_of_scope_message": "I can only help with company data queries — expenses, cash flow, projects, quotations, and deliveries. Try asking about one of those."}
 
 IMPORTANT RULES:
 - Output must be a single valid JSON object with no surrounding text.
 - intent_type must be one of: list_files, query_data, sum, count, average, compare, list_categories, date_filter, out_of_scope
-- source_table must be "Expenses" or "CashFlow" — default to "Expenses" if unclear
-- filters keys: file_name, project_name, category, date, supplier, metadata_key, metadata_value
+- source_table must be one of: "Expenses", "CashFlow", "Project", "Quotation", "QuotationItem", or null
+- Use null for source_table when the query is ambiguous, out of scope, or does not clearly target a specific data type
+- filters keys: file_name, project_name, category, date, supplier, metadata_key, metadata_value, status, client_name, plate_no, dr_no
 - needs_clarification: true only if the query is genuinely ambiguous (missing required info)
 - out_of_scope_message: string (only if intent_type is "out_of_scope")
 """
@@ -245,17 +258,25 @@ def build_system_prompt(conversation_context: str = "") -> str:
     """
     Build the complete system prompt injected into every Mistral call.
 
+    Injects dynamic schema context from SchemaRegistry alongside the static
+    table structure.
+
     Args:
         conversation_context: Previous conversation exchanges (optional)
 
     Returns:
         Complete system prompt string
     """
+    schema_registry = get_schema_registry()
+    dynamic_schema = schema_registry.build_schema_context()
+
     parts = [
         SYSTEM_IDENTITY.strip(),
         "",
         "DATABASE SCHEMA:",
         SCHEMA_CONTEXT.strip(),
+        "",
+        dynamic_schema,
         "",
         QUERY_GATING_RULES.strip(),
         "",
@@ -274,7 +295,8 @@ def build_stage1_prompt(conversation_context: str = "") -> str:
     Build the Stage 1 (intent extraction) system prompt.
 
     Assembles only intent-extraction-relevant context:
-    SYSTEM_IDENTITY + SCHEMA_CONTEXT + QUERY_GATING_RULES + JSON_INTENT_EXAMPLES + SAFETY_RULES.
+    SYSTEM_IDENTITY + SCHEMA_CONTEXT + dynamic schema + QUERY_GATING_RULES
+    + JSON_INTENT_EXAMPLES + SAFETY_RULES.
 
     Args:
         conversation_context: Previous conversation exchanges (optional)
@@ -282,11 +304,16 @@ def build_stage1_prompt(conversation_context: str = "") -> str:
     Returns:
         Stage 1 system prompt string
     """
+    schema_registry = get_schema_registry()
+    dynamic_schema = schema_registry.build_schema_context()
+
     parts = [
         SYSTEM_IDENTITY.strip(),
         "",
         "DATABASE SCHEMA:",
         SCHEMA_CONTEXT.strip(),
+        "",
+        dynamic_schema,
         "",
         QUERY_GATING_RULES.strip(),
         "",
@@ -323,5 +350,3 @@ def build_stage3_prompt(conversation_context: str = "") -> str:
         parts.extend(["", "PREVIOUS CONVERSATION:", conversation_context])
 
     return "\n\n".join(parts)
-
-
