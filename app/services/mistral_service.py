@@ -24,6 +24,7 @@ from datetime import datetime
 from app.config.mistral_config import MistralConfig
 from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES, JSON_INTENT_EXAMPLES, build_stage1_prompt, build_stage3_prompt
 from app.services.mistral_context_manager import MistralContextManager
+from app.services.schema_registry import SchemaRegistry, get_schema_registry
 from app.services.sql_validator import SQLValidator
 from app.services.supabase_client import get_supabase_client
 from app.utils.logger import get_logger
@@ -74,7 +75,8 @@ class MistralService:
         config: Optional[MistralConfig] = None,
         prompt_builder=None,
         context_manager: Optional[MistralContextManager] = None,
-        sql_validator: Optional[SQLValidator] = None
+        sql_validator: Optional[SQLValidator] = None,
+        schema_registry: Optional[SchemaRegistry] = None
     ):
         """
         Initialize hybrid Mistral+T5 service.
@@ -84,11 +86,13 @@ class MistralService:
             prompt_builder: System prompt builder
             context_manager: Conversation context manager
             sql_validator: SQL validator
+            schema_registry: Schema registry for dynamic metadata key discovery
         """
         self.config = config or MistralConfig.from_env()
         self.prompt_builder = prompt_builder
         self.context_manager = context_manager
         self.sql_validator = sql_validator or SQLValidator()
+        self.schema_registry = schema_registry or get_schema_registry()
         
         # Mistral 7B model (for understanding and response formatting)
         self.mistral_model = None
@@ -211,6 +215,19 @@ class MistralService:
                 logger.warning("CUDA not available — loading T5 on CPU (slower inference)")
                 device = "cpu"
             
+            # Fix tokenizer_config.json if extra_special_tokens is a list (not dict)
+            # This is a known issue with some T5 fine-tuned models saved with older transformers
+            import json as _json
+            _tc_path = os.path.join(t5_model_path, "tokenizer_config.json") if os.path.isdir(t5_model_path) else None
+            if _tc_path and os.path.exists(_tc_path):
+                with open(_tc_path) as _f:
+                    _tc = _json.load(_f)
+                if isinstance(_tc.get("extra_special_tokens"), list):
+                    logger.warning("Fixing tokenizer_config.json: extra_special_tokens is list, converting to dict")
+                    _tc["extra_special_tokens"] = {}
+                    with open(_tc_path, "w") as _f:
+                        _json.dump(_tc, _f, indent=2)
+
             # Load T5 tokenizer and model
             self.t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
             self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
@@ -312,28 +329,9 @@ class MistralService:
                 logger.info(f"SQL executed in {execution_time:.0f}ms (source={sql_source}) | rows: {len(data)}")
 
             except (ValidationError, GenerationError, Exception) as t5_err:
-                # T5 failed — fall back to rule-based
-                logger.warning(f"Stage 2 T5 failed: {type(t5_err).__name__}: {t5_err}, falling back to rule-based")
-
-                from app.services.intent_parser import parse_intent
-                from app.services.query_engine import QueryEngine
-                
-                # Use Mistral's already-detected intent type if available,
-                # instead of re-parsing from scratch (which may lose context)
-                mistral_intent_type = intent.get("intent_type", "")
-                rule_intent = parse_intent(query)
-                
-                # If Mistral detected a specific intent (e.g. list_files) but
-                # parse_intent fell back to general_search, trust Mistral
-                if mistral_intent_type and rule_intent.get("intent") == "general_search":
-                    rule_intent["intent"] = mistral_intent_type
-                    logger.info(f"Rule-based override: using Mistral intent '{mistral_intent_type}' instead of general_search")
-                
-                engine = QueryEngine()
-                rule_result = engine.execute(rule_intent)
-                data = rule_result.get("data", [])
-                sql = f"-- rule-based fallback: {rule_intent.get('intent')}"
-                sql_source = "rule-based"
+                # T5 failed — no fallback, raise the error directly
+                logger.error(f"Stage 2 T5 failed: {type(t5_err).__name__}: {t5_err}")
+                raise GenerationError(f"T5 SQL generation failed: {t5_err}")
 
             stage2_time = (time.time() - stage2_start) * 1000
             logger.info(f"Stage 2 done in {stage2_time:.0f}ms | source: {sql_source} | rows: {len(data)}")
@@ -567,50 +565,56 @@ class MistralService:
         Post-process T5 SQL to convert standard column references to JSONB patterns.
         T5 generates: WHERE category = 'fuel'
         We need:      WHERE metadata->>'Category' ILIKE '%fuel%'
+
+        Uses SchemaRegistry for dynamic metadata key discovery instead of
+        hardcoded column mappings.
         """
-        # Known metadata keys that T5 might reference as columns
-        metadata_columns = {
-            "category": "Category",
-            "amount": "Amount",
-            "expenses": "Expenses",
-            "date": "Date",
-            "description": "Description",
-            "supplier": "Supplier",
-            "method": "Method",
-            "name": "Name",
-            "remarks": "Remarks",
-            "inflow": "Inflow",
-            "outflow": "Outflow",
-            "balance": "Balance",
-        }
-        
+        # Build metadata_columns dynamically from SchemaRegistry
+        schema = self.schema_registry.get_schema()
+        source_table = intent.get("source_table")
+
+        metadata_columns: Dict[str, str] = {}
+        if source_table and source_table in schema:
+            for key in schema[source_table]:
+                metadata_columns[key.lower()] = key
+        else:
+            # Cross-table: merge all keys
+            for keys in schema.values():
+                for key in keys:
+                    metadata_columns[key.lower()] = key
+
+        numeric_keys = self.schema_registry.get_numeric_keys()
+
         result = sql
-        
-        # Replace column = 'value' with metadata->>'Column' ILIKE '%value%'
+
+        # Replace known column references with JSONB accessor patterns
         for col_lower, col_proper in metadata_columns.items():
+            # Escape special regex chars in key name
+            col_escaped = re.escape(col_lower)
+
             # Pattern: column = 'value' or column = "value"
             pattern = re.compile(
-                rf"\b{col_lower}\b\s*=\s*['\"]([^'\"]+)['\"]",
+                rf"\b{col_escaped}\b\s*=\s*['\"]([^'\"]+)['\"]",
                 re.IGNORECASE
             )
             result = pattern.sub(
                 f"metadata->>'{col_proper}' ILIKE '%\\1%'",
                 result
             )
-            
+
             # Pattern: column LIKE '%value%'
             pattern2 = re.compile(
-                rf"\b{col_lower}\b\s+LIKE\s+",
+                rf"\b{col_escaped}\b\s+LIKE\s+",
                 re.IGNORECASE
             )
             result = pattern2.sub(f"metadata->>'{col_proper}' ILIKE ", result)
-            
-            # Pattern: SUM(column) or COUNT(column)
+
+            # Pattern: SUM(column), COUNT(column), AVG(column), MIN(column), MAX(column)
             pattern3 = re.compile(
-                rf"(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*{col_lower}\s*\)",
+                rf"(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*{col_escaped}\s*\)",
                 re.IGNORECASE
             )
-            if col_lower in ("amount", "expenses", "inflow", "outflow", "balance"):
+            if col_proper in numeric_keys:
                 result = pattern3.sub(
                     f"\\1((metadata->>'{col_proper}')::numeric)",
                     result
@@ -620,7 +624,28 @@ class MistralService:
                     f"\\1(metadata->>'{col_proper}')",
                     result
                 )
-        
+
+        # Passthrough: catch remaining column references not in known keys
+        # Matches word = 'value' patterns that weren't already converted to metadata->>
+        remaining_eq = re.compile(
+            r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b\s*=\s*['\"]([^'\"]+)['\"]"
+        )
+        for match in remaining_eq.finditer(result):
+            col_name = match.group(1)
+            # Skip already-converted, SQL keywords, and known non-metadata columns
+            if (col_name.lower() in ('source_table', 'file_name', 'project_name',
+                                      'document_type', 'metadata', 'select', 'from',
+                                      'where', 'and', 'or', 'not', 'in', 'like',
+                                      'ilike', 'order', 'group', 'by', 'limit',
+                                      'offset', 'as', 'on', 'join')
+                    or "metadata->>'" in match.group(0)):
+                continue
+            # Unknown key — use as-is in JSONB accessor
+            value = match.group(2)
+            old_fragment = match.group(0)
+            new_fragment = f"metadata->>'{col_name}' ILIKE '%{value}%'"
+            result = result.replace(old_fragment, new_fragment, 1)
+
         # Ensure table is ai_documents (T5 might generate wrong table name)
         result = re.sub(
             r'\bFROM\s+\w+',
@@ -629,7 +654,7 @@ class MistralService:
             count=1,
             flags=re.IGNORECASE
         )
-        
+
         # Convert exact match on file_name/project_name to ILIKE for fuzzy matching
         # T5 generates: file_name = 'francis gays' → file_name ILIKE '%francis gays%'
         for col in ['file_name', 'project_name']:
@@ -638,10 +663,9 @@ class MistralService:
                 re.IGNORECASE
             )
             result = pattern.sub(f"{col} ILIKE '%\\1%'", result)
-        
-        # Add source_table filter if not present
-        source_table = intent.get("source_table", "Expenses")
-        if "source_table" not in result.lower():
+
+        # Add source_table filter if not present (only when source_table is specified)
+        if source_table and "source_table" not in result.lower():
             if "WHERE" in result.upper():
                 result = result.replace("WHERE", f"WHERE source_table = '{source_table}' AND", 1)
             else:
@@ -652,7 +676,8 @@ class MistralService:
                     result = result[:pos] + f" WHERE source_table = '{source_table}'" + result[pos:]
                 else:
                     result = result.rstrip(';') + f" WHERE source_table = '{source_table}';"
-        
+        # When source_table is None, do NOT inject any source_table filter (cross-table search)
+
         return result
 
     async def _format_response(
