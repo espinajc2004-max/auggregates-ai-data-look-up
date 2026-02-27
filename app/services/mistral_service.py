@@ -216,10 +216,31 @@ class MistralService:
                 device = "cpu"
             
             # Fix tokenizer_config.json if extra_special_tokens is a list (not dict)
-            # This is a known issue with some T5 fine-tuned models saved with older transformers
+            # This is a known issue with some T5 fine-tuned models saved with older transformers.
+            # Works for both local paths AND HuggingFace cached downloads.
             import json as _json
-            _tc_path = os.path.join(t5_model_path, "tokenizer_config.json") if os.path.isdir(t5_model_path) else None
-            if _tc_path and os.path.exists(_tc_path):
+            from pathlib import Path
+
+            def _find_tokenizer_config(model_path: str):
+                """Find tokenizer_config.json — local dir or HF cache."""
+                # Case 1: local directory
+                if os.path.isdir(model_path):
+                    p = os.path.join(model_path, "tokenizer_config.json")
+                    return p if os.path.exists(p) else None
+                # Case 2: HuggingFace cache (models--org--repo/snapshots/*/tokenizer_config.json)
+                hf_cache = Path(os.getenv("HF_HOME", os.path.expanduser("~/.cache/huggingface"))) / "hub"
+                # Convert "org/repo" → "models--org--repo"
+                cache_name = "models--" + model_path.replace("/", "--")
+                snapshots_dir = hf_cache / cache_name / "snapshots"
+                if snapshots_dir.exists():
+                    for snap in sorted(snapshots_dir.iterdir(), reverse=True):
+                        tc = snap / "tokenizer_config.json"
+                        if tc.exists():
+                            return str(tc)
+                return None
+
+            _tc_path = _find_tokenizer_config(t5_model_path)
+            if _tc_path:
                 with open(_tc_path) as _f:
                     _tc = _json.load(_f)
                 if isinstance(_tc.get("extra_special_tokens"), list):
@@ -227,6 +248,7 @@ class MistralService:
                     _tc["extra_special_tokens"] = {}
                     with open(_tc_path, "w") as _f:
                         _json.dump(_tc, _f, indent=2)
+                    logger.info(f"tokenizer_config.json fixed at: {_tc_path}")
 
             # Load T5 tokenizer and model
             self.t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
