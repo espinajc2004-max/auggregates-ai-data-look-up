@@ -53,6 +53,7 @@ class SQLValidator:
         3. Multiple statements or command chaining
         4. Role-based table access
         5. Syntax correctness
+        6. Gibberish detection (non-SQL output from T5)
         
         Args:
             sql: Generated SQL query
@@ -71,6 +72,10 @@ class SQLValidator:
                 warnings=[],
                 sanitized_sql=None
             )
+        
+        # Check for gibberish / non-SQL output (T5 bad weights produce repeated non-SQL words)
+        gibberish_errors = self._check_gibberish(sql)
+        errors.extend(gibberish_errors)
         
         # Check for SQL injection patterns
         injection_errors = self._check_injection(sql)
@@ -122,6 +127,40 @@ class SQLValidator:
         for pattern in self.INJECTION_PATTERNS:
             if re.search(pattern, sql, re.IGNORECASE):
                 errors.append(f"Potential SQL injection detected: {pattern}")
+        
+        return errors
+    
+    def _check_gibberish(self, sql: str) -> List[str]:
+        """
+        Check if SQL output is gibberish (non-SQL text from bad T5 model weights).
+        
+        Detects:
+        - Output missing SELECT keyword entirely
+        - Excessive word repetition (hallucination signature)
+        - Output that is too short to be valid SQL
+        """
+        errors = []
+        sql_stripped = sql.strip()
+        
+        # Must start with SELECT (after cleanup, all valid T5 output starts with SELECT)
+        if not sql_stripped.upper().startswith("SELECT"):
+            errors.append("SQL must start with SELECT")
+            return errors
+        
+        # Must contain FROM (every valid query needs a table reference)
+        if not re.search(r'\bFROM\b', sql_stripped, re.IGNORECASE):
+            errors.append("SQL missing FROM clause")
+        
+        # Check for excessive repetition in the full query
+        words = sql_stripped.lower().split()
+        if len(words) >= 8:
+            from collections import Counter
+            word_counts = Counter(words)
+            most_common_word, most_common_count = word_counts.most_common(1)[0]
+            # If a single non-SQL word appears in >40% of all words, it's gibberish
+            sql_common_words = {"select", "from", "where", "and", "or", "as", "on", "in", "is", "not", "null", "by"}
+            if most_common_word not in sql_common_words and most_common_count > len(words) * 0.4:
+                errors.append(f"Gibberish detected: word '{most_common_word}' repeated {most_common_count}/{len(words)} times")
         
         return errors
     

@@ -240,6 +240,8 @@ class Phi3Service:
             import os
             
             # T5 model path from environment (pre-trained text-to-SQL model)
+            # Default: gaussalgo/T5-LM-Large-text2sql-spider (known working text-to-SQL model)
+            # Custom: espinajc/t5-auggregates-text2sql (requires properly fine-tuned weights)
             t5_model_path = os.getenv("T5_MODEL_PATH", "gaussalgo/T5-LM-Large-text2sql-spider")
             
             # Detect local fine-tuned model vs HuggingFace identifier
@@ -592,6 +594,31 @@ class Phi3Service:
             
             sql = self.t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
             logger.info(f"T5 raw output: {sql}")
+            
+            # --- Gibberish detection ---
+            # T5 models with bad weights output repeated non-SQL words (e.g. "patru patru bilete bilete")
+            # A valid SQL output must contain at least one SQL keyword.
+            sql_keywords = {"select", "from", "where", "count", "sum", "avg", "min", "max", "group", "order", "limit", "distinct", "join", "having", "as", "and", "or", "in", "like", "ilike", "between", "is", "not", "null", "case", "when", "then", "else", "end", "union", "insert", "update", "delete", "create", "drop", "alter"}
+            tokens_lower = set(sql.lower().split())
+            if not tokens_lower & sql_keywords:
+                logger.error(f"T5 gibberish detected (no SQL keywords): {sql[:200]}")
+                raise GenerationError(
+                    f"T5 model output is not SQL (possible bad model weights). "
+                    f"Raw output: {sql[:100]}..."
+                )
+            
+            # Detect excessive word repetition (hallucination signature)
+            words = sql.lower().split()
+            if len(words) >= 6:
+                from collections import Counter
+                word_counts = Counter(words)
+                most_common_count = word_counts.most_common(1)[0][1]
+                if most_common_count > len(words) * 0.5:
+                    logger.error(f"T5 repetition detected ({most_common_count}/{len(words)} repeated): {sql[:200]}")
+                    raise GenerationError(
+                        f"T5 model output has excessive repetition (possible bad model weights). "
+                        f"Raw output: {sql[:100]}..."
+                    )
             
             # Clean up SQL
             if not sql.strip().upper().startswith("SELECT"):
