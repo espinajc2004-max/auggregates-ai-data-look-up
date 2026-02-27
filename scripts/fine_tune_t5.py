@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 # Default hyperparameters
 # ---------------------------------------------------------------------------
 DEFAULT_MODEL_NAME = "gaussalgo/T5-LM-Large-text2sql-spider"
-DEFAULT_LEARNING_RATE = 3e-4
-DEFAULT_BATCH_SIZE = 8
-DEFAULT_EPOCHS = 10
+DEFAULT_LEARNING_RATE = 3e-5   # 3e-5 for second-stage fine-tuning (was 3e-4 — caused catastrophic forgetting)
+DEFAULT_BATCH_SIZE = 4         # smaller batch + gradient accumulation = more stable training
+DEFAULT_EPOCHS = 5             # 5 epochs max with early stopping (was 10 — caused overfitting)
+DEFAULT_WARMUP_STEPS = 200     # warm up LR to prevent early divergence
+DEFAULT_GRADIENT_ACCUMULATION = 4  # effective batch = 4 * 4 = 16
 DEFAULT_MAX_INPUT_LENGTH = 512
 DEFAULT_MAX_TARGET_LENGTH = 256
 
@@ -105,6 +107,8 @@ def fine_tune(
     learning_rate: float = DEFAULT_LEARNING_RATE,
     batch_size: int = DEFAULT_BATCH_SIZE,
     epochs: int = DEFAULT_EPOCHS,
+    warmup_steps: int = DEFAULT_WARMUP_STEPS,
+    gradient_accumulation_steps: int = DEFAULT_GRADIENT_ACCUMULATION,
     max_input_length: int = DEFAULT_MAX_INPUT_LENGTH,
     max_target_length: int = DEFAULT_MAX_TARGET_LENGTH,
     **extra_hparams: Any,
@@ -123,9 +127,11 @@ def fine_tune(
         train_dataset: HuggingFace ``Dataset`` with ``"input"`` and ``"target"`` columns.
         val_dataset: HuggingFace ``Dataset`` with ``"input"`` and ``"target"`` columns.
         output_dir: Directory to save the fine-tuned model and tokenizer.
-        learning_rate: Optimizer learning rate (default ``3e-4``).
-        batch_size: Per-device train & eval batch size (default ``8``).
-        epochs: Number of training epochs (default ``10``).
+        learning_rate: Optimizer learning rate (default ``3e-5``).
+        batch_size: Per-device train & eval batch size (default ``4``).
+        epochs: Number of training epochs (default ``5``).
+        warmup_steps: LR warmup steps to prevent early divergence (default ``200``).
+        gradient_accumulation_steps: Accumulate gradients over N steps (default ``4``).
         max_input_length: Max tokenised input length (default ``512``).
         max_target_length: Max tokenised target length (default ``256``).
         **extra_hparams: Forwarded to ``TrainingArguments`` for advanced tuning.
@@ -137,6 +143,7 @@ def fine_tune(
         AutoModelForSeq2SeqLM,
         AutoTokenizer,
         DataCollatorForSeq2Seq,
+        EarlyStoppingCallback,
         Seq2SeqTrainer,
         Seq2SeqTrainingArguments,
     )
@@ -182,6 +189,8 @@ def fine_tune(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         learning_rate=learning_rate,
+        warmup_steps=warmup_steps,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
@@ -189,8 +198,8 @@ def fine_tune(
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         predict_with_generate=False,
-        save_total_limit=2,
-        fp16=False,  # safe default; set True on GPU for speed
+        save_total_limit=3,
+        fp16=True,  # float16 on GPU for speed + memory savings
         report_to="none",
         **extra_hparams,
     )
@@ -211,6 +220,7 @@ def fine_tune(
         eval_dataset=tokenized_val,
         tokenizer=tokenizer,
         data_collator=data_collator,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
     )
 
     logger.info(
@@ -430,6 +440,18 @@ def main() -> None:
         default=DEFAULT_LEARNING_RATE,
         help=f"Optimizer learning rate (default: {DEFAULT_LEARNING_RATE}).",
     )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=DEFAULT_WARMUP_STEPS,
+        help=f"LR warmup steps (default: {DEFAULT_WARMUP_STEPS}).",
+    )
+    parser.add_argument(
+        "--gradient-accumulation",
+        type=int,
+        default=DEFAULT_GRADIENT_ACCUMULATION,
+        help=f"Gradient accumulation steps (default: {DEFAULT_GRADIENT_ACCUMULATION}).",
+    )
 
     args = parser.parse_args()
 
@@ -459,6 +481,8 @@ def main() -> None:
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,
             epochs=args.epochs,
+            warmup_steps=args.warmup_steps,
+            gradient_accumulation_steps=args.gradient_accumulation,
         )
 
         # --- 3. Evaluate -----------------------------------------------------
