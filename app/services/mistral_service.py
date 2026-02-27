@@ -568,8 +568,8 @@ class MistralService:
             # Clean up SQL
             if not sql.strip().upper().startswith("SELECT"):
                 sql = "SELECT " + sql
-            if not sql.strip().endswith(";"):
-                sql = sql.strip() + ";"
+            # Strip trailing semicolons — Supabase RPC rejects them
+            sql = sql.strip().rstrip(";")
             
             # Post-process: convert standard column refs to JSONB patterns
             # T5 generates things like WHERE category = 'fuel' but we need metadata->>'Category'

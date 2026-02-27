@@ -263,6 +263,9 @@ class SupabaseClient:
             Dictionary with 'data' key containing query results
         """
         try:
+            # Strip trailing semicolons — Supabase RPC rejects them
+            sql = sql.strip().rstrip(";").strip()
+            
             # Use the rpc() method which already handles retries and errors
             result = self.rpc("execute_sql", {"query": sql})
             

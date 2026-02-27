@@ -77,7 +77,7 @@ class SchemaRegistry:
             "FROM ai_documents "
             "WHERE document_type = 'row' "
             "GROUP BY source_table, key "
-            "ORDER BY source_table, key;"
+            "ORDER BY source_table, key"
         )
         result = client.execute_sql(sql)
         rows = result.get("data", [])
