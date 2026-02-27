@@ -1,5 +1,5 @@
 """
-GPU Verification Script for Mistral 7B Migration
+GPU Verification Script for Phi-3 Migration
 Checks CUDA availability and GPU memory requirements
 """
 
@@ -8,7 +8,7 @@ import sys
 def check_gpu():
     """Check GPU availability and memory."""
     print("=" * 60)
-    print("GPU Verification for Mistral 7B Migration")
+    print("GPU Verification for Phi-3 Migration")
     print("=" * 60)
     
     # Check if torch is installed
@@ -70,13 +70,13 @@ def check_gpu():
             print("   ✅ Your GPU has sufficient memory!")
             print("   Recommended: Use 8-bit quantization for best balance")
         elif gpu_memory >= 7:
-            print("   ✅ Your GPU can run Mistral 7B with 8-bit quantization")
+            print("   ✅ Your GPU can run Phi-3 with 8-bit quantization")
         elif gpu_memory >= 3.5:
             print("   ⚠️  Your GPU can only run with 4-bit quantization")
             print("   Note: 4-bit may have reduced quality")
         else:
-            print("   ❌ Your GPU has insufficient memory for Mistral 7B")
-            print("   Minimum required: 3.5GB for 4-bit quantization")
+            print("   ❌ Your GPU has insufficient memory for Phi-3")
+            print("   Minimum required: 2GB for 4-bit quantization")
             return False
     
     print("\n" + "=" * 60)

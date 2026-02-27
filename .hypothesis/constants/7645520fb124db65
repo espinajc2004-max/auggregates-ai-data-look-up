@@ -1,4 +1,0 @@
-# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\config\mistral_config.py
-# hypothesis_version: 6.151.4
-
-[0.1, 0.95, 1.0, 300, 512, 2000, '4bit', '8bit', 'MISTRAL_MAX_RETRIES', 'MISTRAL_MAX_TOKENS', 'MISTRAL_MODEL', 'MISTRAL_QUANTIZATION', 'MISTRAL_TEMPERATURE', 'MISTRAL_TIMEOUT', 'MistralConfig', 'auto', 'cpu', 'device_map', 'load_in_4bit', 'load_in_8bit', 'torch_dtype', 'trust_remote_code']

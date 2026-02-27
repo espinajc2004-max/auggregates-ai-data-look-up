@@ -1,6 +1,6 @@
 """
 Prompt templates for AU-Ggregates AI system.
-Injected into Mistral prompts every request to scope the AI's behavior.
+Injected into Phi-3 prompts every request to scope the AI's behavior.
 """
 
 from app.services.schema_registry import get_schema_registry
@@ -79,13 +79,13 @@ Evaluate EVERY query against these rules BEFORE extracting intent fields.
 """
 
 # ============================================================
-# EXAMPLE_QUERIES is deprecated — SQL generation is handled by T5, not Mistral.
+# EXAMPLE_QUERIES is deprecated — SQL generation is handled by T5, not Phi-3.
 # Kept as empty string for backward compatibility.
 # ============================================================
 EXAMPLE_QUERIES = ""
 
 # ============================================================
-# JSON INTENT EXAMPLES — teaches Mistral the exact output format
+# JSON INTENT EXAMPLES — teaches Phi-3 the exact output format
 # These match the exact fields used by T5 SQL generation and QueryEngine
 # ============================================================
 JSON_INTENT_EXAMPLES = """
@@ -256,7 +256,7 @@ RESPONSE FORMATTING RULES:
 
 def build_system_prompt(conversation_context: str = "") -> str:
     """
-    Build the complete system prompt injected into every Mistral call.
+    Build the complete system prompt injected into every Phi-3 call.
 
     Injects dynamic schema context from SchemaRegistry alongside the static
     table structure.

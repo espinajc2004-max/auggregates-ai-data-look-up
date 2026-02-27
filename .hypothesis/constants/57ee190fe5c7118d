@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\api\routes\chat_hybrid.py
+# hypothesis_version: 6.151.4
+
+[0.0, 0.5, 0.6, 0.95, 1.0, 120, 503, '/chat/hybrid', '/chat/hybrid/status', 'anonymous', 'clarification', 'data', 'error', 'intent', 'intent_type', 'load_attempts', 'loading_in_progress', 'max_attempts', 'needs_clarification', 'out_of_scope', 'phi3', 'phi3+t5', 'phi3_loaded', 'pipeline', 'query_data', 'response', 'row_count', 'session_id', 'sql', 'sql_source', 'stage1_ms', 'stage1_time_ms', 'stage2_ms', 'stage2_time_ms', 'stage3_ms', 'stage3_time_ms', 'startup', 'total_ms', 'total_time_ms', 'unavailable', 'unknown', 'user_id']

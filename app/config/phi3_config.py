@@ -1,5 +1,5 @@
 """
-Configuration module for Mistral 7B service.
+Configuration module for Phi-3 service.
 """
 
 import os
@@ -8,11 +8,11 @@ from typing import Optional
 
 
 @dataclass
-class MistralConfig:
-    """Configuration for Mistral 7B service."""
+class Phi3Config:
+    """Configuration for Phi-3 service."""
     
     # Model Configuration
-    model_name: str = "mistralai/Mistral-7B-Instruct-v0.2"
+    model_name: str = "microsoft/Phi-3-mini-4k-instruct"
     quantization: str = "4bit"
     device: str = "cpu"
     device_map: str = "auto"
@@ -40,21 +40,21 @@ class MistralConfig:
     generation_timeout: int = 300  # seconds (5 min for CPU inference)
     
     @classmethod
-    def from_env(cls) -> "MistralConfig":
+    def from_env(cls) -> "Phi3Config":
         """Load configuration from environment variables."""
         return cls(
-            model_name=os.getenv("MISTRAL_MODEL", cls.model_name),
-            quantization=os.getenv("MISTRAL_QUANTIZATION", cls.quantization),
-            temperature=float(os.getenv("MISTRAL_TEMPERATURE", str(cls.temperature))),
-            max_new_tokens=int(os.getenv("MISTRAL_MAX_TOKENS", str(cls.max_new_tokens))),
-            max_retries=int(os.getenv("MISTRAL_MAX_RETRIES", str(cls.max_retries))),
-            generation_timeout=int(os.getenv("MISTRAL_TIMEOUT", str(cls.generation_timeout))),
+            model_name=os.getenv("PHI3_MODEL", cls.model_name),
+            quantization=os.getenv("PHI3_QUANTIZATION", cls.quantization),
+            temperature=float(os.getenv("PHI3_TEMPERATURE", str(cls.temperature))),
+            max_new_tokens=int(os.getenv("PHI3_MAX_TOKENS", str(cls.max_new_tokens))),
+            max_retries=int(os.getenv("PHI3_MAX_RETRIES", str(cls.max_retries))),
+            generation_timeout=int(os.getenv("PHI3_TIMEOUT", str(cls.generation_timeout))),
         )
 
 
 @dataclass
 class ModelLoadConfig:
-    """Configuration for loading Mistral model."""
+    """Configuration for loading Phi-3 model."""
     
     model_name: str
     quantization: str

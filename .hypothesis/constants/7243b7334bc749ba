@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\config\phi3_config.py
+# hypothesis_version: 6.151.4
+
+[0.1, 0.95, 1.0, 300, 512, 2000, '4bit', '8bit', 'PHI3_MAX_RETRIES', 'PHI3_MAX_TOKENS', 'PHI3_MODEL', 'PHI3_QUANTIZATION', 'PHI3_TEMPERATURE', 'PHI3_TIMEOUT', 'Phi3Config', 'auto', 'cpu', 'device_map', 'load_in_4bit', 'load_in_8bit', 'torch_dtype', 'trust_remote_code']

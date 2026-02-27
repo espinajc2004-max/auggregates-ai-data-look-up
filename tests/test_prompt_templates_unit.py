@@ -2,7 +2,7 @@
 Unit tests for prompt template constants in app/config/prompt_templates.py.
 
 Validates content correctness, completeness, and safety of all prompt template
-constants after the Mistral prompt template upgrade.
+constants after the Phi-3 prompt template upgrade.
 """
 
 import json

@@ -2,7 +2,7 @@
 Property-based tests for prompt template correctness properties.
 
 Uses hypothesis to verify formal correctness properties across random inputs.
-Feature: mistral-prompt-template-upgrade
+Feature: phi3-prompt-template-upgrade
 """
 
 import re
@@ -49,7 +49,7 @@ class TestProperty1NoSqlStatements:
 
     **Validates: Requirements 1.1, 1.2, 1.3**
 
-    Feature: mistral-prompt-template-upgrade, Property 1: No SQL statements
+    Feature: phi3-prompt-template-upgrade, Property 1: No SQL statements
     """
 
     def test_constants_have_no_sql(self):
@@ -109,7 +109,7 @@ class TestProperty2StageContentIsolation:
 
     **Validates: Requirements 4.3, 4.4, 7.2**
 
-    Feature: mistral-prompt-template-upgrade, Property 2: Stage content isolation
+    Feature: phi3-prompt-template-upgrade, Property 2: Stage content isolation
     """
 
     @given(context=st.text(min_size=0, max_size=200))
@@ -145,7 +145,7 @@ class TestProperty3IntentJsonRequiredFields:
 
     **Validates: Requirements 3.4, 6.3**
 
-    Feature: mistral-prompt-template-upgrade, Property 3: Intent_JSON required fields
+    Feature: phi3-prompt-template-upgrade, Property 3: Intent_JSON required fields
     """
 
     REQUIRED_FIELDS = [
@@ -206,7 +206,7 @@ class TestProperty4NoContentDuplication:
 
     **Validates: Requirements 7.3**
 
-    Feature: mistral-prompt-template-upgrade, Property 4: No content duplication
+    Feature: phi3-prompt-template-upgrade, Property 4: No content duplication
     """
 
     TEMPLATE_CONSTANTS = {

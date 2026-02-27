@@ -11,7 +11,7 @@ pinned: false
 
 AI-powered data lookup for AU-Ggregates CRM.
 
-**Pipeline:** Mistral-7B-Instruct-v0.2 → T5-LM-Large-text2sql-spider → Supabase
+**Pipeline:** Phi-3-mini-4k-instruct → T5-text2sql → Supabase
 
 **Endpoint:** `POST /api/chat/hybrid`
 

@@ -1,5 +1,5 @@
 """
-Context Manager for Mistral queries.
+Context Manager for Phi-3 queries.
 Manages conversation history and context across queries.
 """
 
@@ -8,8 +8,8 @@ from datetime import datetime
 from app.services.conversation_db import ConversationDatabaseService as ConversationDB
 
 
-class MistralContextManager:
-    """Manages conversation context for Mistral queries."""
+class Phi3ContextManager:
+    """Manages conversation context for Phi-3 queries."""
     
     def __init__(
         self,

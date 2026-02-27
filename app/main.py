@@ -76,7 +76,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api", tags=["Health"])
 # app.include_router(predict.router, prefix="/api", tags=["AI Prediction"])  # Commented out - missing dependencies
 # app.include_router(chat.router, prefix="/api", tags=["Chat - Unified V1+V2"])  # Commented out - missing dependencies
-app.include_router(chat_hybrid.router, prefix="/api", tags=["Chat - Hybrid Mistral+T5"])
+app.include_router(chat_hybrid.router, prefix="/api", tags=["Chat - Hybrid Phi-3+T5"])
 
 
 

@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\services\sql_validator.py
+# hypothesis_version: 6.151.4
+
+['(?<!>)--(?!>)', '/\\*', ';', ';\\s*DELETE', ';\\s*DROP', ';\\s*UPDATE', 'ALTER', 'Access denied', 'CALL', 'CREATE', 'Command chaining', 'DELETE', 'DROP', 'ENCODER', 'EXECUTE', 'Empty SQL query', 'GRANT', 'INSERT', 'Invalid SQL syntax', 'OR\\s+1\\s*=\\s*1', 'REVOKE', 'SQL injection', 'TRUNCATE', 'UNION\\s+SELECT', 'UPDATE', 'Write operation', '\\*/', '\\b', '\\bCashFlow\\b']

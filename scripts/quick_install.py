@@ -1,5 +1,5 @@
 """
-Quick installation script for Hybrid Mistral+T5 Architecture.
+Quick installation script for Hybrid Phi-3+T5 Architecture.
 Skips problematic dependencies and focuses on core ML packages.
 """
 
@@ -53,7 +53,7 @@ def check_gpu():
             
             if gpu_memory < 6:
                 print(f"\n⚠️  Warning: Only {gpu_memory:.2f} GB available")
-                print("   Mistral 7B with 8-bit quantization needs 6GB+")
+                print("   Phi-3 with 4-bit quantization needs ~2GB+")
                 print("   Consider using 4-bit quantization or CPU (slow)")
             
             return True
@@ -108,7 +108,7 @@ def check_t5_model():
 def main():
     """Main installation check."""
     print("\n" + "=" * 60)
-    print("  HYBRID MISTRAL+T5 QUICK CHECK")
+    print("  HYBRID PHI-3+T5 QUICK CHECK")
     print("=" * 60)
     
     results = {

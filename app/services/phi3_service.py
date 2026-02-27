@@ -1,18 +1,14 @@
 """
-Mistral Service - Hybrid 3-stage architecture (Mistral → T5 → Mistral).
+Phi-3 Service - Hybrid 3-stage architecture (Phi-3 → T5 → Phi-3).
 
 Architecture:
-  Mistral = Brain (understands user query, extracts intent, formats response)
+  Phi-3 = Brain (understands user query, extracts intent, formats response)
   T5 = SQL Converter (sole SQL generator in Stage 2)
-  Rule-based = Last resort fallback (ONLY fires when T5 errors out)
 
 Pipeline:
-  Stage 1: Mistral extracts structured intent JSON from user query
+  Stage 1: Phi-3 extracts structured intent JSON from user query
   Stage 2: T5 generates SQL (only method) → validated → executed via Supabase
-  Stage 3: Mistral formats query results into natural language response
-
-Fallback chain (Stage 2 only):
-  T5 SQL → raise exception → process_query catches → rule-based QueryEngine (last resort)
+  Stage 3: Phi-3 formats query results into natural language response
 """
 
 import re
@@ -21,9 +17,9 @@ import json
 from typing import Optional, Dict, Any
 from datetime import datetime
 
-from app.config.mistral_config import MistralConfig
+from app.config.phi3_config import Phi3Config
 from app.config.prompt_templates import SYSTEM_IDENTITY, SCHEMA_CONTEXT, SAFETY_RULES, JSON_INTENT_EXAMPLES, build_stage1_prompt, build_stage3_prompt
-from app.services.mistral_context_manager import MistralContextManager
+from app.services.phi3_context_manager import Phi3ContextManager
 from app.services.schema_registry import SchemaRegistry, get_schema_registry
 from app.services.sql_validator import SQLValidator
 from app.services.supabase_client import get_supabase_client
@@ -55,50 +51,66 @@ SPIDER_SCHEMA = (
     ") | query: "
 )
 
+# Entity filter key → JSONB metadata key mapping for _inject_entity_filters
+ENTITY_FILTER_MAP = {
+    "project_name": "project_name",
+    "category": "Category",
+    "file_name": "Name",
+    "date": "Date",
+    "status": "status",
+    "client_name": "client_name",
+    "plate_no": "plate_no",
+    "dr_no": "dr_no",
+}
 
-class MistralService:
+# Supplier metadata key depends on source_table
+SUPPLIER_MAP = {
+    "QuotationItem": "quarry_location",
+    "_default": "Name",
+}
+
+
+class Phi3Service:
     """
-    Hybrid 3-stage service: Mistral → T5 → Mistral.
+    Hybrid 3-stage service: Phi-3 → T5 → Phi-3.
     
-    Mistral = Brain (understands query + formats response)
+    Phi-3 = Brain (understands query + formats response)
     T5 = SQL Converter (sole SQL generator in Stage 2)
     
-    Stage 1 (Mistral): Extract structured intent JSON from user query
+    Stage 1 (Phi-3): Extract structured intent JSON from user query
     Stage 2 (T5): T5 generates SQL (only method) → validate → execute
-    Stage 3 (Mistral): Format query results into natural language response
-    
-    Fallback: Rule-based engine (ONLY when T5 errors out in Stage 2)
+    Stage 3 (Phi-3): Format query results into natural language response
     """
     
     def __init__(
         self,
-        config: Optional[MistralConfig] = None,
+        config: Optional[Phi3Config] = None,
         prompt_builder=None,
-        context_manager: Optional[MistralContextManager] = None,
+        context_manager: Optional[Phi3ContextManager] = None,
         sql_validator: Optional[SQLValidator] = None,
         schema_registry: Optional[SchemaRegistry] = None
     ):
         """
-        Initialize hybrid Mistral+T5 service.
+        Initialize hybrid Phi-3+T5 service.
         
         Args:
-            config: Mistral configuration
+            config: Phi-3 configuration
             prompt_builder: System prompt builder
             context_manager: Conversation context manager
             sql_validator: SQL validator
             schema_registry: Schema registry for dynamic metadata key discovery
         """
-        self.config = config or MistralConfig.from_env()
+        self.config = config or Phi3Config.from_env()
         self.prompt_builder = prompt_builder
         self.context_manager = context_manager
         self.sql_validator = sql_validator or SQLValidator()
         self.schema_registry = schema_registry or get_schema_registry()
         
-        # Mistral 7B model (for understanding and response formatting)
-        self.mistral_model = None
-        self.mistral_tokenizer = None
-        self._mistral_loaded = False
-        self._mistral_enabled = True  # Enable Mistral 7B
+        # Phi-3 model (for understanding and response formatting)
+        self.phi3_model = None
+        self.phi3_tokenizer = None
+        self._phi3_loaded = False
+        self._phi3_enabled = True
         
         # T5 model (for SQL generation)
         self.t5_model = None
@@ -108,36 +120,35 @@ class MistralService:
     
     def _load_model(self) -> None:
         """
-        Load both Mistral 7B and T5 models.
+        Load both Phi-3 and T5 models.
         
         Raises:
-            ModelLoadError: If Mistral fails to load.
-            T5 load failures are caught gracefully — the service continues
-            with rule-based fallback only.
+            ModelLoadError: If Phi-3 fails to load.
+            T5 load failures are caught gracefully — the service continues.
         """
-        # Load Mistral 7B (mistralai/Mistral-7B-Instruct-v0.2 with 4-bit quantization)
-        self._load_mistral()
+        # Load Phi-3 (microsoft/Phi-3-mini-4k-instruct with 4-bit quantization)
+        self._load_phi3()
         try:
             self._load_t5()
         except ModelLoadError as e:
             logger.warning(f"T5 model failed to load — continuing without T5: {e}")
             self._t5_loaded = False
     
-    def _load_mistral(self) -> None:
+    def _load_phi3(self) -> None:
         """
-        Load Mistral 7B model for intent understanding and response formatting.
+        Load Phi-3 model for intent understanding and response formatting.
         
         Raises:
             ModelLoadError: If model fails to load
         """
-        if self._mistral_loaded:
+        if self._phi3_loaded:
             return
         
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
             
-            logger.info(f"Loading Mistral model: {self.config.model_name}")
+            logger.info(f"Loading Phi-3 model: {self.config.model_name}")
             logger.info(f"Device: {self.config.device}")
             
             # Check GPU availability
@@ -147,12 +158,12 @@ class MistralService:
                 self.config.device = "cpu"
             
             # Load tokenizer
-            self.mistral_tokenizer = AutoTokenizer.from_pretrained(
+            self.phi3_tokenizer = AutoTokenizer.from_pretrained(
                 self.config.model_name,
                 trust_remote_code=True
             )
             
-            # Load Mistral model with 4-bit quantization to reduce memory usage
+            # Load Phi-3 model with 4-bit quantization to reduce memory usage
             load_kwargs = {
                 "device_map": self.config.device_map,
                 "trust_remote_code": True,
@@ -166,13 +177,13 @@ class MistralService:
             else:
                 load_kwargs["torch_dtype"] = torch.float32
             
-            self.mistral_model = AutoModelForCausalLM.from_pretrained(
+            self.phi3_model = AutoModelForCausalLM.from_pretrained(
                 self.config.model_name,
                 **load_kwargs
             )
             
-            self._mistral_loaded = True
-            logger.info("Mistral model loaded successfully")
+            self._phi3_loaded = True
+            logger.info("Phi-3 model loaded successfully")
             
             # Log GPU memory if available
             if hasattr(torch, 'cuda') and torch.cuda.is_available():
@@ -181,8 +192,8 @@ class MistralService:
                 logger.info(f"GPU Memory - Allocated: {memory_allocated:.2f}GB, Reserved: {memory_reserved:.2f}GB")
         
         except Exception as e:
-            logger.error(f"Failed to load Mistral model: {str(e)}", exc_info=True)
-            raise ModelLoadError(f"Failed to load Mistral: {str(e)}")
+            logger.error(f"Failed to load Phi-3 model: {str(e)}", exc_info=True)
+            raise ModelLoadError(f"Failed to load Phi-3: {str(e)}")
     
     def _load_t5(self) -> None:
         """
@@ -272,11 +283,9 @@ class MistralService:
     ) -> Dict[str, Any]:
         """
         Process query using 3-stage hybrid architecture:
-        Stage 1: Mistral extracts structured intent (JSON)
+        Stage 1: Phi-3 extracts structured intent (JSON)
         Stage 2: T5 generates SQL from intent → validated → executed via Supabase
-        Stage 3: Mistral formats results into natural language (Taglish)
-
-        Falls back to rule-based query_engine if T5 SQL is invalid.
+        Stage 3: Phi-3 formats results into natural language (Taglish)
         """
         start_time = time.time()
 
@@ -289,8 +298,8 @@ class MistralService:
             if conversation_id and self.context_manager:
                 context = await self.context_manager.get_context(conversation_id, query)
 
-            # STAGE 1: Mistral extracts structured intent
-            logger.info("Stage 1: Extracting intent with Mistral")
+            # STAGE 1: Phi-3 extracts structured intent
+            logger.info("Stage 1: Extracting intent with Phi-3")
             stage1_start = time.time()
             intent = await self._extract_intent(query, context)
             stage1_time = (time.time() - stage1_start) * 1000
@@ -320,7 +329,7 @@ class MistralService:
                 }
 
             # STAGE 2: Generate SQL → validate → execute
-            # Chain: T5 (from Mistral's structured intent) → rule-based (last resort)
+            # Chain: T5 (from Phi-3's structured intent)
             logger.info("Stage 2: Generating SQL with T5")
             stage2_start = time.time()
             data = []
@@ -329,8 +338,8 @@ class MistralService:
             sql_source = "none"
 
             try:
-                # T5 receives structured query from Mistral (not raw user input)
-                logger.info("Stage 2: T5 SQL generation from Mistral's structured intent")
+                # T5 receives structured query from Phi-3 (not raw user input)
+                logger.info("Stage 2: T5 SQL generation from Phi-3's structured intent")
                 sql, sql_source = await self._generate_sql_with_t5(query, intent)
                 logger.info(f"Stage 2 generated SQL (source={sql_source}): {sql}")
                 
@@ -358,8 +367,8 @@ class MistralService:
             stage2_time = (time.time() - stage2_start) * 1000
             logger.info(f"Stage 2 done in {stage2_time:.0f}ms | source: {sql_source} | rows: {len(data)}")
 
-            # STAGE 3: Mistral formats natural language response
-            logger.info("Stage 3: Formatting response with Mistral")
+            # STAGE 3: Phi-3 formats natural language response
+            logger.info("Stage 3: Formatting response with Phi-3")
             stage3_start = time.time()
             formatted_response = await self._format_response(query, intent, sql, data, context)
             stage3_time = (time.time() - stage3_start) * 1000
@@ -419,14 +428,14 @@ class MistralService:
     
     async def _extract_intent(self, query: str, context: list) -> Dict[str, Any]:
         """
-        STAGE 1: Use Mistral to extract structured intent from natural language (Taglish).
+        STAGE 1: Use Phi-3 to extract structured intent from natural language (Taglish).
 
         Returns JSON with intent_type, entities, filters, needs_clarification.
-        Falls back to rule-based parser if Mistral output is unparseable.
+        Raises GenerationError if no valid JSON is found in model output.
         """
         import torch
 
-        # Mistral-7B-Instruct uses [INST]...[/INST] format
+        # Phi-3-mini-4k-instruct uses <|user|>...<|end|><|assistant|> format
         system_msg = build_stage1_prompt()
         user_msg = (
             f"Extract intent from this query: \"{query}\"\n\n"
@@ -441,27 +450,27 @@ class MistralService:
             "Return ONLY the JSON object. No explanation."
         )
 
-        prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
+        prompt = f"<|user|>\n{system_msg}\n\n{user_msg}\n<|end|>\n<|assistant|>"
 
         try:
-            inputs = self.mistral_tokenizer(prompt, return_tensors="pt")
+            inputs = self.phi3_tokenizer(prompt, return_tensors="pt")
             cuda_available = hasattr(torch, 'cuda') and torch.cuda.is_available()
             if cuda_available:
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
             with torch.no_grad():
-                outputs = self.mistral_model.generate(
+                outputs = self.phi3_model.generate(
                     **inputs,
-                    max_new_tokens=300,
+                    max_new_tokens=500,
                     temperature=0.1,
                     do_sample=False,
-                    pad_token_id=self.mistral_tokenizer.eos_token_id
+                    pad_token_id=self.phi3_tokenizer.eos_token_id
                 )
 
             # Decode only the new tokens (skip the prompt)
             new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-            response = self.mistral_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-            logger.info(f"Mistral Stage1 raw output: {response[:300]}")
+            response = self.phi3_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            logger.info(f"Phi-3 Stage1 raw output: {response[:300]}")
 
             # Extract JSON from response
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
@@ -474,25 +483,13 @@ class MistralService:
                 intent.setdefault("needs_clarification", False)
                 return intent
 
-            logger.warning("Mistral Stage1: no JSON found in output, using rule-based fallback")
+            raise GenerationError("Stage 1: No valid JSON found in Phi-3 output")
 
+        except GenerationError:
+            raise
         except Exception as e:
-            logger.error(f"Mistral Stage1 error: {str(e)}")
-
-        # Fallback: use rule-based intent parser
-        from app.services.intent_parser import parse_intent
-        rule = parse_intent(query)
-        # Detect source_table from query
-        query_lower = query.lower()
-        source_table = "CashFlow" if any(w in query_lower for w in ["cashflow", "cash flow", "inflow", "outflow"]) else "Expenses"
-        return {
-            "intent_type": rule.get("intent", "query_data"),
-            "source_table": source_table,
-            "entities": list(rule.get("slots", {}).values()),
-            "filters": {**rule.get("slots", {}), "source_table": source_table},
-            "needs_clarification": rule.get("needs_clarification", False),
-            "clarification_question": rule.get("clarification_question", "")
-        }
+            logger.error(f"Phi-3 Stage1 error: {str(e)}")
+            raise GenerationError(f"Stage 1: {str(e)}")
     
     async def _generate_sql_with_t5(self, query: str, intent: Dict[str, Any]) -> tuple:
         """
@@ -533,10 +530,12 @@ class MistralService:
     async def _generate_sql_with_t5_model(self, query: str, intent: Dict[str, Any]) -> str:
         """
         Use T5 model to generate SQL from natural language query.
-        Uses Spider format input with the raw user query.
+        Uses Spider format input with intent_type + source_table (no entity names).
         """
-        # Spider format: pass raw user query to the Spider-trained model
-        t5_input = SPIDER_SCHEMA + query
+        # Spider format: pass intent_type + source_table only (no entity names to prevent T5 hallucination)
+        intent_type = intent.get("intent_type", "query_data")
+        source_table = intent.get("source_table", "Expenses")
+        t5_input = SPIDER_SCHEMA + f"{intent_type} {source_table}"
         
         logger.info(f"T5 Spider format input: {t5_input}")
         
@@ -575,6 +574,9 @@ class MistralService:
             # T5 generates things like WHERE category = 'fuel' but we need metadata->>'Category'
             sql = self._convert_to_jsonb_sql(sql, intent)
             
+            # Inject entity filters from Intent_JSON into WHERE clause
+            sql = self._inject_entity_filters(sql, intent)
+            
             logger.info(f"T5 post-processed SQL: {sql}")
             return sql
         
@@ -582,6 +584,68 @@ class MistralService:
             logger.error(f"T5 SQL generation error: {str(e)}")
             raise GenerationError(f"Failed to generate SQL: {str(e)}")
     
+    def _inject_entity_filters(self, sql: str, intent: Dict[str, Any]) -> str:
+        """
+        Inject entity values from Intent_JSON filters into SQL WHERE clause.
+
+        Args:
+            sql: SQL skeleton from T5 (already JSONB-converted)
+            intent: Intent_JSON with filters dict
+
+        Returns:
+            SQL with entity filter conditions injected
+        """
+        filters = intent.get("filters", {})
+        if not filters:
+            return sql
+
+        source_table = intent.get("source_table", "")
+        conditions = []
+
+        for key, value in filters.items():
+            # Sanitize value: strip single quotes to prevent SQL injection
+            sanitized = str(value).replace("'", "")
+            if not sanitized:
+                continue
+
+            if key == "supplier":
+                metadata_key = SUPPLIER_MAP.get(source_table, SUPPLIER_MAP["_default"])
+            else:
+                metadata_key = ENTITY_FILTER_MAP.get(key)
+                if metadata_key is None:
+                    continue
+
+            conditions.append(f"metadata->>'{metadata_key}' ILIKE '%{sanitized}%'")
+
+        if not conditions:
+            return sql
+
+        condition_str = " AND ".join(conditions)
+
+        # Check if SQL already has a WHERE clause (case-insensitive)
+        where_match = re.search(r'\bWHERE\b', sql, re.IGNORECASE)
+        if where_match:
+            # Find the end of the existing WHERE clause conditions
+            # (before ORDER BY, GROUP BY, LIMIT, or end of string)
+            clause_pattern = re.search(
+                r'\b(ORDER\s+BY|GROUP\s+BY|LIMIT)\b', sql[where_match.end():], re.IGNORECASE
+            )
+            if clause_pattern:
+                insert_pos = where_match.end() + clause_pattern.start()
+                sql = sql[:insert_pos] + " AND " + condition_str + " " + sql[insert_pos:]
+            else:
+                sql = sql + " AND " + condition_str
+        else:
+            # No WHERE clause — insert before ORDER BY/GROUP BY/LIMIT or at end
+            clause_match = re.search(r'\b(ORDER\s+BY|GROUP\s+BY|LIMIT)\b', sql, re.IGNORECASE)
+            if clause_match:
+                insert_pos = clause_match.start()
+                sql = sql[:insert_pos] + "WHERE " + condition_str + " " + sql[insert_pos:]
+            else:
+                sql = sql + " WHERE " + condition_str
+
+        return sql
+
     def _convert_to_jsonb_sql(self, sql: str, intent: Dict[str, Any]) -> str:
         """
         Post-process T5 SQL to convert standard column references to JSONB patterns.
@@ -714,8 +778,7 @@ class MistralService:
         context: list
     ) -> str:
         """
-        STAGE 3: Use Mistral to format results into natural Taglish response.
-        Falls back to template if Mistral fails.
+        STAGE 3: Use Phi-3 to format results into natural language response.
         """
         import torch
 
@@ -740,38 +803,36 @@ class MistralService:
             f"- Do NOT expose SQL or technical details to the user."
         )
 
-        prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
+        prompt = f"<|user|>\n{system_msg}\n\n{user_msg}\n<|end|>\n<|assistant|>"
 
         try:
-            inputs = self.mistral_tokenizer(prompt, return_tensors="pt")
+            inputs = self.phi3_tokenizer(prompt, return_tensors="pt")
             cuda_available = hasattr(torch, 'cuda') and torch.cuda.is_available()
             if cuda_available:
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
             with torch.no_grad():
-                outputs = self.mistral_model.generate(
+                outputs = self.phi3_model.generate(
                     **inputs,
                     max_new_tokens=200,
                     temperature=0.7,
                     top_p=0.9,
                     do_sample=True,
-                    pad_token_id=self.mistral_tokenizer.eos_token_id
+                    pad_token_id=self.phi3_tokenizer.eos_token_id
                 )
 
             new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-            response = self.mistral_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-            logger.info(f"Mistral Stage3 response: {response[:200]}")
+            response = self.phi3_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            logger.info(f"Phi-3 Stage3 response: {response[:200]}")
 
             if response:
                 return response
 
-        except Exception as e:
-            logger.error(f"Mistral Stage3 error: {str(e)}")
+            raise GenerationError("Stage 3: Phi-3 returned empty response")
 
-        # Fallback: template response
-        if not data:
-            return "No results found for your query."
-        total_key = next((k for k in ["total", "Expenses", "Amount"] if data[0].get(k)), None)
-        if total_key and len(data) == 1:
-            return f"Found: {data[0].get(total_key)} ({len(data)} result)."
-        return f"Found {len(data)} results for your query."
+        except GenerationError:
+            raise
+        except Exception as e:
+            logger.error(f"Phi-3 Stage3 error: {str(e)}")
+            raise GenerationError(f"Stage 3: {str(e)}")
+

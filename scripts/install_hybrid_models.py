@@ -1,10 +1,10 @@
 """
-Installation script for Hybrid Mistral+T5 Architecture.
+Installation script for Hybrid Phi-3+T5 Architecture.
 
 This script:
 1. Checks Python dependencies
 2. Verifies GPU availability
-3. Downloads Mistral 7B model
+3. Downloads Phi-3-mini-4k-instruct model
 4. Checks for T5 model or provides instructions
 5. Tests model loading
 """
@@ -72,10 +72,10 @@ def check_gpu():
             
             if gpu_memory < 6:
                 print(f"\n⚠️  Warning: GPU has only {gpu_memory:.2f} GB memory")
-                print("   Mistral 7B with 8-bit quantization requires at least 6GB")
-                print("   Consider using 4-bit quantization or CPU (very slow)")
+                print("   Phi-3 with 4-bit quantization requires at least 2GB")
+                print("   Consider using CPU if GPU memory is very limited")
             else:
-                print(f"\n✓ GPU has sufficient memory for 8-bit quantization")
+                print(f"\n✓ GPU has sufficient memory for 4-bit quantization")
             
             return True
         else:
@@ -89,17 +89,17 @@ def check_gpu():
         return False
 
 
-def download_mistral():
-    """Download Mistral 7B model."""
-    print_header("Step 3: Downloading Mistral 7B Model")
+def download_phi3():
+    """Download Phi-3-mini-4k-instruct model."""
+    print_header("Step 3: Downloading Phi-3-mini-4k-instruct Model")
     
     try:
         from transformers import AutoTokenizer, AutoModelForCausalLM
         
-        model_name = "mistralai/Mistral-7B-Instruct-v0.1"
+        model_name = "microsoft/Phi-3-mini-4k-instruct"
         
         print(f"Downloading {model_name}...")
-        print("This will download ~14GB and may take several minutes...")
+        print("This will download ~2GB and may take several minutes...")
         print("(Model will be cached in ~/.cache/huggingface/)\n")
         
         # Download tokenizer
@@ -120,11 +120,11 @@ def download_mistral():
         del model
         del tokenizer
         
-        print("\n✓ Mistral 7B model is ready!")
+        print("\n✓ Phi-3-mini-4k-instruct model is ready!")
         return True
         
     except Exception as e:
-        print(f"✗ Error downloading Mistral: {e}")
+        print(f"✗ Error downloading Phi-3: {e}")
         print("\nYou can try downloading manually later.")
         print("The model will auto-download on first use.")
         return False
@@ -191,8 +191,8 @@ def test_hybrid_service():
         print("Testing service imports...")
         
         # Test imports
-        from app.services.mistral_service import MistralService
-        from app.config.mistral_config import MistralConfig
+        from app.services.phi3_service import Phi3Service
+        from app.config.phi3_config import Phi3Config
         
         print("✓ Service imports successful")
         
@@ -217,11 +217,11 @@ def create_env_template():
     else:
         print("Creating .env template...")
         
-        template = """# Mistral Configuration
-MISTRAL_MODEL=mistralai/Mistral-7B-Instruct-v0.1
-MISTRAL_QUANTIZATION=8bit
-MISTRAL_TEMPERATURE=0.1
-MISTRAL_MAX_TOKENS=512
+        template = """# Phi-3 Configuration
+PHI3_MODEL=microsoft/Phi-3-mini-4k-instruct
+PHI3_QUANTIZATION=4bit
+PHI3_TEMPERATURE=0.1
+PHI3_MAX_TOKENS=512
 
 # T5 Configuration
 T5_MODEL_PATH=gaussalgo/T5-LM-Large-text2sql-spider
@@ -243,16 +243,16 @@ LOG_LEVEL=INFO
 def main():
     """Main installation flow."""
     print("\n" + "=" * 60)
-    print("  HYBRID MISTRAL+T5 ARCHITECTURE INSTALLATION")
-    print("  Stage 1: Mistral (Intent Understanding)")
+    print("  HYBRID PHI-3+T5 ARCHITECTURE INSTALLATION")
+    print("  Stage 1: Phi-3 (Intent Understanding)")
     print("  Stage 2: T5 (SQL Generation)")
-    print("  Stage 3: Mistral (Response Formatting)")
+    print("  Stage 3: Phi-3 (Response Formatting)")
     print("=" * 60)
     
     results = {
         "dependencies": False,
         "gpu": False,
-        "mistral": False,
+        "phi3": False,
         "t5": False,
         "service": False
     }
@@ -262,7 +262,7 @@ def main():
     results["gpu"] = check_gpu()
     
     if results["dependencies"]:
-        results["mistral"] = download_mistral()
+        results["phi3"] = download_phi3()
         results["t5"] = check_t5_model()
         results["service"] = test_hybrid_service()
     
@@ -274,7 +274,7 @@ def main():
     print("Status:")
     print(f"  Dependencies: {'✓' if results['dependencies'] else '✗'}")
     print(f"  GPU: {'✓' if results['gpu'] else '✗ (will use CPU)'}")
-    print(f"  Mistral 7B: {'✓' if results['mistral'] else '⚠️  (will download on first use)'}")
+    print(f"  Phi-3: {'✓' if results['phi3'] else '⚠️  (will download on first use)'}")
     print(f"  T5 Model: {'✓' if results['t5'] else '✗ (needs setup)'}")
     print(f"  Service: {'✓' if results['service'] else '✗'}")
     

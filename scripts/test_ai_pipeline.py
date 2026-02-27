@@ -1,12 +1,12 @@
 """
 AI Pipeline Diagnostic Test
 ============================
-Tests kung gumagana ang buong Mistral + T5 pipeline.
+Tests kung gumagana ang buong Phi-3 + T5 pipeline.
 Run: python scripts/test_ai_pipeline.py
 
 Sinusuri:
   Stage 0 - GPU / CUDA check
-  Stage 1 - Mistral model load + intent extraction
+  Stage 1 - Phi-3 model load + intent extraction
   Stage 2 - T5 model load + SQL generation
   Stage 3 - Supabase query execution
   Stage 4 - Full end-to-end pipeline
@@ -60,13 +60,13 @@ def test_gpu():
 
 
 # ============================================================================
-# STAGE 1: MISTRAL LOAD + INTENT EXTRACTION
+# STAGE 1: PHI-3 LOAD + INTENT EXTRACTION
 # ============================================================================
-def test_mistral(device: str):
-    header("STAGE 1: Mistral-7B Load + Intent Extraction")
+def test_phi3(device: str):
+    header("STAGE 1: Phi-3 Load + Intent Extraction")
 
-    model_name = os.getenv("MISTRAL_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
-    quantization = os.getenv("MISTRAL_QUANTIZATION", "4bit")
+    model_name = os.getenv("PHI3_MODEL", "microsoft/Phi-3-mini-4k-instruct")
+    quantization = os.getenv("PHI3_QUANTIZATION", "4bit")
 
     info(f"Model: {model_name}")
     info(f"Quantization: {quantization}")
@@ -107,7 +107,7 @@ def test_mistral(device: str):
             load_kwargs["torch_dtype"] = torch.float32
 
         model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
-        ok(f"Mistral model loaded in {time.time()-t0:.1f}s")
+        ok(f"Phi-3 model loaded in {time.time()-t0:.1f}s")
 
         if torch.cuda.is_available():
             mem = torch.cuda.memory_allocated() / 1024**3
@@ -117,7 +117,8 @@ def test_mistral(device: str):
         info("Testing intent extraction...")
         test_query = "pakita mo yong fuel expenses sa project alpha"
 
-        prompt = f"""[INST] You are an AI assistant for a construction management system.
+        prompt = f"""<|user|>
+You are an AI assistant for a construction management system.
 Extract the intent from this query and return ONLY valid JSON.
 
 Query: "{test_query}"
@@ -128,7 +129,9 @@ Return JSON with these fields:
 - slots: object with file_name, category, method, date fields (null if not present)
 - clarification_question: string or null
 
-JSON: [/INST]"""
+JSON:
+<|end|>
+<|assistant|>"""
 
         t0 = time.time()
         inputs = tokenizer(prompt, return_tensors="pt")
@@ -159,16 +162,16 @@ JSON: [/INST]"""
                 ok(f"Needs clarification: {intent.get('needs_clarification')}")
                 return model, tokenizer, intent
             except json.JSONDecodeError:
-                fail(f"Mistral returned invalid JSON: {json_match.group()[:200]}")
+                fail(f"Phi-3 returned invalid JSON: {json_match.group()[:200]}")
                 info("Raw response tail: " + response[-300:])
                 return model, tokenizer, None
         else:
-            fail("Mistral did not return JSON")
+            fail("Phi-3 did not return JSON")
             info("Raw response tail: " + response[-300:])
             return model, tokenizer, None
 
     except Exception as e:
-        fail(f"Mistral failed: {e}")
+        fail(f"Phi-3 failed: {e}")
         import traceback
         traceback.print_exc()
         return None, None, None
@@ -297,12 +300,12 @@ def test_supabase(sql: str):
 # ============================================================================
 # STAGE 4: FULL PIPELINE SUMMARY
 # ============================================================================
-def print_summary(gpu_device, mistral_ok, t5_ok, supabase_ok, intent, sql):
+def print_summary(gpu_device, phi3_ok, t5_ok, supabase_ok, intent, sql):
     header("PIPELINE SUMMARY")
 
     stages = [
         ("GPU/CUDA",   gpu_device == "cuda"),
-        ("Mistral-7B", mistral_ok),
+        ("Phi-3",      phi3_ok),
         ("T5 SQL Gen", t5_ok),
         ("Supabase",   supabase_ok),
     ]
@@ -315,21 +318,21 @@ def print_summary(gpu_device, mistral_ok, t5_ok, supabase_ok, intent, sql):
 
     print()
     if intent:
-        info(f"Mistral intent output: {json.dumps(intent, indent=2)}")
+        info(f"Phi-3 intent output: {json.dumps(intent, indent=2)}")
     if sql:
         info(f"T5 SQL output: {sql}")
 
     print()
-    if mistral_ok and t5_ok and supabase_ok:
+    if phi3_ok and t5_ok and supabase_ok:
         ok("FULL PIPELINE IS WORKING — ready for production!")
-    elif not mistral_ok:
-        fail("BLOCKED: Mistral not loading. Fix GPU/CUDA first.")
+    elif not phi3_ok:
+        fail("BLOCKED: Phi-3 not loading. Fix GPU/CUDA first.")
         info("Run: nvidia-smi  →  check CUDA version")
         info("Then: python -m pip install torch --index-url https://download.pytorch.org/whl/cu121")
-    elif mistral_ok and not t5_ok:
-        fail("PARTIAL: Mistral works but T5 failed.")
-        info("T5 may need fine-tuning. Rule-based fallback is active.")
-    elif mistral_ok and t5_ok and not supabase_ok:
+    elif phi3_ok and not t5_ok:
+        fail("PARTIAL: Phi-3 works but T5 failed.")
+        info("T5 may need fine-tuning.")
+    elif phi3_ok and t5_ok and not supabase_ok:
         fail("PARTIAL: Models work but Supabase connection failed.")
         info("Check SUPABASE_URL and SUPABASE_KEY in .env")
     else:
@@ -348,8 +351,8 @@ if __name__ == "__main__":
     gpu_device = test_gpu()
 
     # Stage 1
-    mistral_model, mistral_tokenizer, intent = test_mistral(gpu_device)
-    mistral_ok = mistral_model is not None
+    phi3_model, phi3_tokenizer, intent = test_phi3(gpu_device)
+    phi3_ok = phi3_model is not None
 
     # Stage 2
     t5_model, t5_tokenizer, sql = test_t5(intent)
@@ -359,4 +362,4 @@ if __name__ == "__main__":
     supabase_ok = test_supabase(sql)
 
     # Summary
-    print_summary(gpu_device, mistral_ok, t5_ok, supabase_ok, intent, sql)
+    print_summary(gpu_device, phi3_ok, t5_ok, supabase_ok, intent, sql)

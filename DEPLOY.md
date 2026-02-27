@@ -4,7 +4,7 @@
 
 1. **Create a new Space** at https://huggingface.co/new-space
    - SDK: **Docker**
-   - Hardware: **T4 GPU** (needed for Mistral 4-bit)
+   - Hardware: **T4 GPU** (needed for Phi-3 4-bit)
 
 2. **Push this repo** to the Space:
    ```bash
@@ -17,8 +17,8 @@
    |-----|-------|
    | `SUPABASE_URL` | your supabase url |
    | `SUPABASE_KEY` | your supabase anon key |
-   | `MISTRAL_MODEL` | `mistralai/Mistral-7B-Instruct-v0.2` |
-   | `MISTRAL_QUANTIZATION` | `4bit` |
+   | `PHI3_MODEL` | `microsoft/Phi-3-mini-4k-instruct` |
+   | `PHI3_QUANTIZATION` | `4bit` |
    | `T5_MODEL_PATH` | `gaussalgo/T5-LM-Large-text2sql-spider` |
    | `ALLOWED_TABLES` | `ai_documents,Project,conversations` |
 

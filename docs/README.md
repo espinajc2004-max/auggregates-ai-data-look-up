@@ -137,7 +137,7 @@ After Task 4.4: All security measures will be in place ✅
 
 ### Performance Note
 - Current: GPU-accelerated inference (CUDA on T4)
-- T5-LM-Large (~3GB VRAM) + Mistral-7B 4-bit (~5-6GB) fits within T4 16GB VRAM
+- T5-LM-Large (~3GB VRAM) + Phi-3 4-bit (~2GB) fits within T4 16GB VRAM
 
 ---
 
@@ -205,7 +205,7 @@ type docs\IMPLEMENTATION_QUICKSTART.md
 
 ### What Worked Well
 1. ✅ T5-LM-Large pre-trained on Spider — no custom training needed
-2. ✅ T5-LM-Large (770MB) fits alongside Mistral-7B on T4 GPU (16GB VRAM)
+2. ✅ T5-LM-Large (770MB) fits alongside Phi-3 on T4 GPU (16GB VRAM)
 3. ✅ Model generates correct SQL structure
 4. ✅ Confidence scoring works well (0.90 average)
 5. ✅ Easy to integrate into existing codebase

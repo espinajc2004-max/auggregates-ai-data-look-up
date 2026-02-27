@@ -1,0 +1,4 @@
+# file: C:\Users\John Carlo Espina\Desktop\thesis-project\auggregates-ai-assistant\app\services\conversation_db.py
+# hypothesis_version: 6.151.4
+
+[1000, 'conversation_turns', 'error', 'execution_time', 'get_next_turn_number', 'limit', 'order', 'p_metadata', 'p_query_text', 'p_response_text', 'p_session_id', 'p_turn_number', 'p_user_id', 'query_length', 'response_length', 'session_id', 'sessions_deleted', 'turn_count', 'turn_number', 'turn_number.asc', 'turns_deleted', 'user_id']

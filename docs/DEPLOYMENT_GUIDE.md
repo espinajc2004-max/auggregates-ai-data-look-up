@@ -32,7 +32,7 @@
 - CPU: 8 cores
 - RAM: 16GB
 - Storage: 20GB free space
-- GPU: NVIDIA GPU with 16GB+ VRAM (e.g., T4) — required for optimal T5-LM-Large + Mistral-7B performance
+- GPU: NVIDIA GPU with 16GB+ VRAM (e.g., T4) — required for optimal T5-LM-Large + Phi-3 performance
 
 ### Software Requirements
 
@@ -518,7 +518,7 @@ Before deploying to production:
 
 The T5-LM-Large model (`gaussalgo/T5-LM-Large-text2sql-spider`) loads on GPU by default with automatic CPU fallback:
 ```python
-# Automatic in MistralService._load_t5()
+# Automatic in Phi3Service._load_t5()
 # GPU (CUDA) if available, CPU fallback with warning
 import torch
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -528,7 +528,7 @@ Expected speedup with GPU:
 - Stage 2 T5: 2.6s (CPU) → 200-300ms (GPU) — ~10x faster
 
 VRAM budget on Colab T4 (16GB):
-- Mistral-7B (4-bit quantized): ~5-6 GB
+- Phi-3 (4-bit quantized): ~2 GB
 - T5-LM-Large: ~3 GB
 - PyTorch overhead: ~1 GB
 - Total: ~9-10 GB (well within 16GB)
