@@ -292,15 +292,22 @@ class Phi3Service:
                         _json.dump(_tc, _f, indent=2)
                     logger.info(f"tokenizer_config.json fixed at: {_tc_path}")
 
-            # Load T5 tokenizer and model
+            # Load T5 tokenizer and model (float16 on GPU to save VRAM)
             self.t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
-            self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
+            load_dtype = torch.float16 if device == "cuda" else torch.float32
+            self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(
+                t5_model_path, torch_dtype=load_dtype
+            )
             self.t5_model = self.t5_model.to(device)
             self.t5_model.eval()
             self._t5_device = device  # Store for inference use
             
+            # Free reserved-but-unallocated GPU memory to reduce fragmentation
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            
             self._t5_loaded = True
-            logger.info(f"T5 model loaded successfully on {device}")
+            logger.info(f"T5 model loaded successfully on {device} (dtype={load_dtype})")
         
         except Exception as e:
             logger.error(f"Failed to load T5 model: {str(e)}", exc_info=True)
@@ -493,7 +500,6 @@ class Phi3Service:
                 outputs = self.phi3_model.generate(
                     **inputs,
                     max_new_tokens=500,
-                    temperature=0.1,
                     do_sample=False,
                     pad_token_id=self.phi3_tokenizer.eos_token_id
                 )
